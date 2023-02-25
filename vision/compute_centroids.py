@@ -136,7 +136,24 @@ def calculate_centroids(seg):
 if __name__ == "__main__":
         
     start_time = time.time()
-    image = cv.imread("vision/test_map.jpeg")
+    cam = cv.VideoCapture(0)
+
+    cv.namedWindow("test")
+
+    while True:
+        ret, image = cam.read()
+        if ret:
+            k = cv.waitKey(1)
+            if k == ord('r'):
+                cv.imshow("test", image)
+                cv.imwrite("test.png", image)
+                break
+            else:
+                break
+
+    cam.release()
+    cv.destroyAllWindows()
+
     thresh = threshold_image(image)
 
     if thresh.shape[0] > 1000 or thresh.shape[1] > 1000:
