@@ -51,11 +51,15 @@ float last_state[3] = {0.0, 0.0, 0.0};
 int wheelSpeedLeft = 170;
 int wheelSpeedRight = 150;
 
-int num_points = 2;
-float target_xs[2] = {0.1, 0.0};
-float target_ys[2] = {0.0, 0.1}; 
-float target_thetas[2];
-int found[2] = {0, 0};
+// Waypoints
+const int num_points = 4;
+float target_xs[num_points] = {0.1, 0.1, 0.0, 0.0};
+float target_ys[num_points] = {0.0, 0.1, 0.1, 0.0}; 
+float target_thetas[num_points];
+int found[num_points];
+
+float distFromTarget = 0;
+float prevDistFromTarget = 100;
 
 int num = 0;
 
@@ -175,17 +179,59 @@ void reset() {
     delay(10000);
 }
 
+
+
 void translation(float current_x, float current_y, float target_x, float target_y) {
     wheelSpeedLeft = 170;
     wheelSpeedRight = 150;
+    distFromTarget = getDistance(current_x, current_y, target_x, target_y);
+    Serial.print("current_x: ");
+    Serial.print(current_x);
+    Serial.print("current_x: ");
+    Serial.print(current_y);
+    Serial.print("target_x: ");
+    Serial.print(target_x);
+    Serial.print("target_y: ");
+    Serial.print(target_y);
     Serial.print("distance: ");
-    Serial.println(getDistance(current_x, current_y, target_x, target_y));
-    if (target_x - current_x < -0.1 || target_y - current_y < -0.1) {
-       setMotor(STOP, 0, enA, IN1, IN2);
-       setMotor(STOP, 0, enB, IN3, IN4);
-       Serial.println("hard stop");
-       delay(20000);
+    Serial.println(distFromTarget);
+
+    if (distFromTarget <= prevDistFromTarget) {
+       // Approaching target, continue
+       prevDistFromTarget = distFromTarget;
+       if (getDistance(current_x, current_y, target_x, target_y) > 0.02) {
+            Serial.println("forward");
+            setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
+            setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
+        }
+        else { // Target reached
+            setMotor(STOP, 0, enA, IN1, IN2);
+            setMotor(STOP, 0, enB, IN3, IN4);
+            Serial.println("translation reached");
+            num++;
+            target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
+            Serial.print("new theta: ");
+            Serial.println(target_thetas[num]);
+        }
+    } else {
+      // Target missed, recalibrate
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+        Serial.println("--hard stop, translation not reached--");
+        num++;
+        target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
+        Serial.print("new theta: ");
+        Serial.println(target_thetas[num]);
+//        delay(20000);
     }
+    
+//    if (target_x - current_x < -0.1 || target_y - current_y < -0.1) {
+//       setMotor(STOP, 0, enA, IN1, IN2);
+//       setMotor(STOP, 0, enB, IN3, IN4);
+//       Serial.println("hard stop");
+//       delay(20000);
+//    }
+
 //    if (getDistance(current_x, current_y, target_x, target_y) < 0.05) {
 //        wheelSpeedLeft = 140;
 //        wheelSpeedRight = 120;
@@ -194,20 +240,7 @@ void translation(float current_x, float current_y, float target_x, float target_
 //        wheelSpeedLeft = 158;
 //        wheelSpeedRight = 140;
 //    }
-    if (getDistance(current_x, current_y, target_x, target_y) > 0.02) {
-        Serial.println("forward");
-        setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
-        setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
-    }
-    else {
-        setMotor(STOP, 0, enA, IN1, IN2);
-        setMotor(STOP, 0, enB, IN3, IN4);
-        Serial.println("translation reached");
-        num++;
-        target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
-        Serial.print("new theta: ");
-        Serial.println(target_thetas[num]);
-    }
+  
 }
 
 void rotation(float current_theta, float target_theta) {
@@ -215,15 +248,21 @@ void rotation(float current_theta, float target_theta) {
     wheelSpeedRight = 200;
     Serial.print("rotation - current_theta: ");
     Serial.println(rad2deg(current_theta));
+    Serial.print("rotation - target_theta: ");
     Serial.println(rad2deg(target_theta));
-    if (fabs(rad2deg(target_theta) - rad2deg(current_theta)) > 3) {
+    if (rad2deg(target_theta) - rad2deg(current_theta) > 3) {
         setMotor(BACKWARD, wheelSpeedLeft, enA, IN1, IN2);
         setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
+    }
+    else if (rad2deg(target_theta) - rad2deg(current_theta) < -3) {
+        setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
+        setMotor(BACKWARD, wheelSpeedRight, enB, IN3, IN4);
     }
     else {
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
         Serial.println("rotation reached");
+        prevDistFromTarget = 100;
         found[num] = 1;
     }
 }
