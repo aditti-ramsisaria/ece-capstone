@@ -18,9 +18,18 @@
 #define STOP 0
 #define BACKWARD -1
 
+// Constants
+const int COUNTS_PER_ROTATION = 14;
+const float GEAR_RATIO = 100.0F;
+const float WHEEL_DIAMETER = 0.068;
+const float WHEEL_CIRCUMFERENCE = 0.2136;
+const float WHEEL_BASE = 0.142;
+
+const unsigned long PERIOD = 50;
+
+// Global variables
 unsigned long currentMillis;
 unsigned long prevMillis;
-const unsigned long PERIOD = 50;
 
 long M1_encoder_val = 0;
 long M2_encoder_val = 0; 
@@ -29,12 +38,6 @@ long countsLeft = 0;
 long countsRight = 0;
 long prevLeft = 0;
 long prevRight = 0;
-
-const int COUNTS_PER_ROTATION = 14;
-const float GEAR_RATIO = 100.0F;
-const float WHEEL_DIAMETER = 0.068;
-const float WHEEL_CIRCUMFERENCE = 0.2136;
-const float WHEEL_BASE = 0.142;
 
 float t = 0.0F;
 float w_left = 0.0F;
@@ -48,20 +51,21 @@ float k00, k01, k10, k11, k30, k31;
 float state[3] = {0.0, 0.0, 0.0};
 float last_state[3] = {0.0, 0.0, 0.0};
 
+float distFromTarget = 0;
+float prevDistFromTarget = 100;
+
+int num = 0;
+
+// Parameters
 int wheelSpeedLeft = 170;
 int wheelSpeedRight = 150;
+const float SCALE = 1.7;
 
-// Waypoints
 const int num_points = 4;
 float target_xs[num_points] = {0.1, 0.1, 0.0, 0.0};
 float target_ys[num_points] = {0.0, 0.1, 0.1, 0.0}; 
 float target_thetas[num_points];
 int found[num_points];
-
-float distFromTarget = 0;
-float prevDistFromTarget = 100;
-
-int num = 0;
 
 // right - M2 - B
 // left - M1 - A
@@ -82,13 +86,12 @@ void setup() {
   pinMode(M2_ENCA,INPUT);
   pinMode(M2_ENCB,INPUT);
   attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
-  Serial.println("target pos");
-
+  
   // compute target thetas
   target_thetas[0] = getTheta(0.0, 0.0, target_xs[0], target_ys[0]);
   Serial.print("new theta: ");
-  Serial.println(target_thetas[num]);
-  
+  Serial.println(rad2deg(target_thetas[num]));
+  Serial.println("Starting in 5s")
   delay(5000);
 }
  
@@ -98,7 +101,6 @@ void loop() {
 
 void checkEncoders() {
   currentMillis = millis();
-
   if (currentMillis > prevMillis + PERIOD) {
     countsLeft += M1_encoder_val;
     M1_encoder_val = 0;
@@ -107,8 +109,8 @@ void checkEncoders() {
 
     t = (currentMillis - prevMillis) / 1000.0;
 
-    w_left = 1.7 * 2.0 * PI * ((countsLeft - prevLeft) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
-    w_right = 1.7 * 2.0 * PI * ((countsRight - prevRight) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
+    w_left = SCALE * 2.0 * PI * ((countsLeft - prevLeft) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
+    w_right = SCALE * 2.0 * PI * ((countsRight - prevRight) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
 
     left_speed = -1.0F * w_left * WHEEL_DIAMETER / 2.0F;
     right_speed = w_right * WHEEL_DIAMETER / 2.0F;
@@ -136,7 +138,7 @@ void checkEncoders() {
     Serial.print("y: ");
     Serial.println(state[1]);
     Serial.print("theta: ");
-    Serial.println(state[2] * 180.0 / PI);
+    Serial.println(rad2deg(state[2]));
 
     if (found[num] == 0) {
         // rotate till theta reached
@@ -149,6 +151,7 @@ void checkEncoders() {
     }
 
     if (num == num_points) {
+        //  Path completed
         reset();
     }
 
@@ -179,21 +182,12 @@ void reset() {
     delay(10000);
 }
 
-
-
 void translation(float current_x, float current_y, float target_x, float target_y) {
     wheelSpeedLeft = 170;
     wheelSpeedRight = 150;
+
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
-    Serial.print("current_x: ");
-    Serial.print(current_x);
-    Serial.print("current_x: ");
-    Serial.print(current_y);
-    Serial.print("target_x: ");
-    Serial.print(target_x);
-    Serial.print("target_y: ");
-    Serial.print(target_y);
-    Serial.print("distance: ");
+    Serial.println("distance from target: ");
     Serial.println(distFromTarget);
 
     if (distFromTarget <= prevDistFromTarget) {
@@ -204,7 +198,7 @@ void translation(float current_x, float current_y, float target_x, float target_
             setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
             setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
         }
-        else { // Target reached
+        else { // Target reached, stop
             setMotor(STOP, 0, enA, IN1, IN2);
             setMotor(STOP, 0, enB, IN3, IN4);
             Serial.println("translation reached");
@@ -214,47 +208,35 @@ void translation(float current_x, float current_y, float target_x, float target_
             Serial.println(target_thetas[num]);
         }
     } else {
-      // Target missed, recalibrate
+      // Target missed, stop
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
-        Serial.println("--hard stop, translation not reached--");
-        num++;
+        Serial.println("HARD STOP: > 2cm away from the target");
+
+        // Corrective action
+        found[num] == 0 // Reset the turn - rotate and translate again to meet the target
         target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
         Serial.print("new theta: ");
         Serial.println(target_thetas[num]);
-//        delay(20000);
     }
     
-//    if (target_x - current_x < -0.1 || target_y - current_y < -0.1) {
-//       setMotor(STOP, 0, enA, IN1, IN2);
-//       setMotor(STOP, 0, enB, IN3, IN4);
-//       Serial.println("hard stop");
-//       delay(20000);
-//    }
-
-//    if (getDistance(current_x, current_y, target_x, target_y) < 0.05) {
-//        wheelSpeedLeft = 140;
-//        wheelSpeedRight = 120;
-//    }
-//    else {
-//        wheelSpeedLeft = 158;
-//        wheelSpeedRight = 140;
-//    }
-  
-}
 
 void rotation(float current_theta, float target_theta) {
     wheelSpeedLeft = 215;
     wheelSpeedRight = 200;
+
     Serial.print("rotation - current_theta: ");
     Serial.println(rad2deg(current_theta));
     Serial.print("rotation - target_theta: ");
     Serial.println(rad2deg(target_theta));
+
     if (rad2deg(target_theta) - rad2deg(current_theta) > 3) {
+        // Clockwise
         setMotor(BACKWARD, wheelSpeedLeft, enA, IN1, IN2);
         setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
     }
     else if (rad2deg(target_theta) - rad2deg(current_theta) < -3) {
+        // Counterclockwise
         setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
         setMotor(BACKWARD, wheelSpeedRight, enB, IN3, IN4);
     }
