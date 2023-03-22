@@ -62,8 +62,8 @@ int wheelSpeedRight = 150;
 const float SCALE = 1.7;
 
 const int num_points = 4;
-float target_xs[num_points] = {0.1, 0.1, 0.0, 0.0};
-float target_ys[num_points] = {0.0, 0.1, 0.1, 0.0}; 
+float target_xs[num_points] = {0.2, 0.2, 0.0, 0.0};
+float target_ys[num_points] = {0.0, 0.2, 0.2, 0.0}; 
 float target_thetas[num_points];
 int found[num_points];
 
@@ -71,6 +71,8 @@ int found[num_points];
 // left - M1 - A
  
 void setup() {
+  reset();
+  
   Serial.begin(115200);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -82,7 +84,7 @@ void setup() {
   pinMode(M1_ENCA, INPUT);
   pinMode(M1_ENCB, INPUT);
   attachInterrupt(digitalPinToInterrupt(M1_ENCA), readEncoderM1, RISING);
-
+  
   pinMode(M2_ENCA,INPUT);
   pinMode(M2_ENCB,INPUT);
   attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
@@ -91,7 +93,7 @@ void setup() {
   target_thetas[0] = getTheta(0.0, 0.0, target_xs[0], target_ys[0]);
   Serial.print("new theta: ");
   Serial.println(rad2deg(target_thetas[num]));
-  Serial.println("Starting in 5s")
+  Serial.println("Starting in 5s");
   delay(5000);
 }
  
@@ -112,12 +114,12 @@ void checkEncoders() {
     w_left = SCALE * 2.0 * PI * ((countsLeft - prevLeft) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
     w_right = SCALE * 2.0 * PI * ((countsRight - prevRight) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
 
-    left_speed = -1.0F * w_left * WHEEL_DIAMETER / 2.0F;
-    right_speed = w_right * WHEEL_DIAMETER / 2.0F;
+    left_speed = w_left * WHEEL_DIAMETER / 2.0F;
+    right_speed =  -1.0 * w_right * WHEEL_DIAMETER / 2.0F;
 
     robot_speed = (left_speed + right_speed) / 2.0; // in m/s
 
-    w_robot = (right_speed - left_speed) / WHEEL_BASE;  // in rad/s
+    w_robot = -1.0 * (right_speed - left_speed) / WHEEL_BASE;  // in rad/s
 
     k00 = robot_speed * cos(last_state[2]);  // last_state[2]; // in radians
     k01 = robot_speed * sin(last_state[2]);  // last_state[2]; // in radians
@@ -133,6 +135,8 @@ void checkEncoders() {
     state[1] = last_state[1] + ((t / 6) * (k01 + 4 * k11 + k31)); // y
     state[2] = fmod(last_state[2] + (t * w_robot), 2 * PI);
 
+    Serial.print("w_robot: ");
+    Serial.println(w_robot); 
     Serial.print("x: ");
     Serial.println(state[0]);
     Serial.print("y: ");
@@ -153,6 +157,7 @@ void checkEncoders() {
     if (num == num_points) {
         //  Path completed
         reset();
+        delay(10000);
     }
 
     last_state[0] = state[0];
@@ -177,14 +182,14 @@ void reset() {
     countsLeft = 0;
     countsRight = 0;
     num = 0;
-    found[0] = 0;
-    found[1] = 0;
-    delay(10000);
+    for (int i = 0; i < num_points; i++) {
+        found[i] = 0;
+    }
 }
 
 void translation(float current_x, float current_y, float target_x, float target_y) {
-    wheelSpeedLeft = 170;
-    wheelSpeedRight = 150;
+    wheelSpeedLeft = 150;
+    wheelSpeedRight = 130;
 
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
     Serial.println("distance from target: ");
@@ -214,16 +219,17 @@ void translation(float current_x, float current_y, float target_x, float target_
         Serial.println("HARD STOP: > 2cm away from the target");
 
         // Corrective action
-        found[num] == 0 // Reset the turn - rotate and translate again to meet the target
+        prevDistFromTarget = 100;
+        found[num] = 0; // Reset the turn - rotate and translate again to meet the target
         target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
         Serial.print("new theta: ");
         Serial.println(target_thetas[num]);
     }
-    
+}    
 
 void rotation(float current_theta, float target_theta) {
-    wheelSpeedLeft = 215;
-    wheelSpeedRight = 200;
+    wheelSpeedLeft = 150;
+    wheelSpeedRight = 130;
 
     Serial.print("rotation - current_theta: ");
     Serial.println(rad2deg(current_theta));
@@ -281,11 +287,11 @@ float getDistance(float x1, float y1, float x2, float y2) {
 
 void setMotor(int dir, int pwmVal, int pwm_pin, int in1, int in2){
   analogWrite(pwm_pin, pwmVal);
-  if(dir == -1){
+  if(dir == 1){
     digitalWrite(in1, LOW);
     digitalWrite(in2, HIGH);
   }
-  else if(dir == 1){
+  else if(dir == -1){
     digitalWrite(in1, HIGH);
     digitalWrite(in2, LOW);
   }
