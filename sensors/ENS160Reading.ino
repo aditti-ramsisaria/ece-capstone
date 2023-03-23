@@ -85,16 +85,16 @@ void setup() {
 
   //Serial.print("ENS160...");
   ens160.begin();
-  //Serial.println(ens160.available() ? "done." : "failed!");
-  //if (ens160.available()) {
+  if (ens160.available()) {
+    ens160.setMode(ENS160_OPMODE_STD);
     // Print ENS160 versions
     //Serial.print("\tRev:  "); Serial.print(ens160.getMajorRev());
     //Serial.print("."); Serial.print(ens160.getMinorRev());
     //Serial.print("."); Serial.println(ens160.getBuild());
   
     //Serial.print("\tStandard mode ");
-    //Serial.println(ens160.setMode(ENS160_OPMODE_STD) ? "done." : "failed!");
-  //}
+    //Serial.println( ? "done." : "failed!");
+  }
 
   while(label) {
     Serial.print("grove_voc1");
