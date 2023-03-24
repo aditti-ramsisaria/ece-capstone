@@ -54,22 +54,25 @@ float last_state[3] = {0.0, 0.0, 0.0};
 float distFromTarget = 0;
 float prevDistFromTarget = 100;
 
-int num = 0;
-
 // Parameters
 int wheelSpeedLeft = 170;
 int wheelSpeedRight = 150;
 const float SCALE = 1.7;
 
-const int num_points = 4;
-float target_xs[num_points] = {0.2, 0.2, 0.0, 0.0};
-float target_ys[num_points] = {0.0, 0.2, 0.2, 0.0}; 
-float target_thetas[num_points];
-int found[num_points];
+float target_X = 0.0;
+float target_Y = 0.0; 
+float target_angle = 0.0;
+int rotation_complete = 1;
+int translation_complete = 1;
 
 // right - M2 - B
 // left - M1 - A
  
+// generate a random x, y coordinate
+// compute theta between current x, y and generated
+// rotate to new orientation
+// translate to new coordinate
+
 void setup() {
   reset();
   
@@ -88,17 +91,49 @@ void setup() {
   pinMode(M2_ENCA,INPUT);
   pinMode(M2_ENCB,INPUT);
   attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
-  
-  // compute target thetas
-  target_thetas[0] = getTheta(0.0, 0.0, target_xs[0], target_ys[0]);
-  Serial.print("new theta: ");
-  Serial.println(rad2deg(target_thetas[num]));
+
   Serial.println("Starting in 5s");
   delay(5000);
+  randomSeed(analogRead(0));
 }
  
 void loop() {
-  checkEncoders(); 
+    if (translation_complete == 1) {
+        // generate new random x, y
+        float x, y;
+        
+        float a = random(target_X * 100 + 10, target_X * 100 + 20);
+        float b = random(target_X * 100 - 20, target_X * 100 - 10);
+        float c = random(target_Y * 100 + 10, target_Y * 100 + 20);
+        float d = random(target_Y * 100 - 20, target_Y * 100 - 10);
+        
+        if (random(2) == 0) {
+            x = a;
+        }
+        else {
+            x = b;
+        }
+
+        if (random(2) == 0) {
+            y = c;
+        }
+        else {
+            y = d;
+        }
+        
+        target_X = constrain(x, 0, 75) / 100.0;
+        target_Y = constrain(y, 0, 75) / 100.0;
+        Serial.print("new x: ");
+        Serial.println(target_X);
+        Serial.print("new y: ");
+        Serial.println(target_Y);
+        Serial.println(c);
+        Serial.println(d);
+        target_angle = getTheta(state[0], state[1], target_X, target_Y);
+        rotation_complete = 0;
+        translation_complete = 0;
+    }
+    checkEncoders(); 
 }
 
 // odometry computations and main loop commands
@@ -110,6 +145,10 @@ void checkEncoders() {
     countsRight += M2_encoder_val;
     M2_encoder_val = 0;
 
+    Serial.print("countsleft: ");
+    Serial.println(countsLeft);
+    Serial.print("countsright: ");
+    Serial.println(countsRight);
     t = (currentMillis - prevMillis) / 1000.0;
 
     w_left = SCALE * 2.0 * PI * ((countsLeft - prevLeft) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
@@ -145,20 +184,14 @@ void checkEncoders() {
     Serial.print("theta: ");
     Serial.println(rad2deg(state[2]));
 
-    if (found[num] == 0) {
+    if (rotation_complete == 0) {
         // rotate till theta reached
-        rotation(state[2], target_thetas[num]);
+        rotation(state[2], target_angle);
     }
 
-    else if (found[num] == 1) {
+    else if (rotation_complete == 1) {
         // translate till x, y, reached
-        translation(state[0], state[1], target_xs[num], target_ys[num]);
-    }
-
-    if (num == num_points) {
-        //  Path completed
-        reset();
-        delay(10000);
+        translation(state[0], state[1], target_X, target_Y);
     }
 
     last_state[0] = state[0];
@@ -183,16 +216,14 @@ void reset() {
     last_state[2] = 0.0;
     countsLeft = 0;
     countsRight = 0;
-    num = 0;
-    for (int i = 0; i < num_points; i++) {
-        found[i] = 0;
-    }
+    rotation_complete = 1;
+    translation_complete = 1;
 }
 
 // translate from current coordinate to target coordinate
 void translation(float current_x, float current_y, float target_x, float target_y) {
-    wheelSpeedLeft = 150;
-    wheelSpeedRight = 130;
+    wheelSpeedLeft = 130;
+    wheelSpeedRight = 110;
 
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
     Serial.println("distance from target: ");
@@ -210,10 +241,7 @@ void translation(float current_x, float current_y, float target_x, float target_
             setMotor(STOP, 0, enA, IN1, IN2);
             setMotor(STOP, 0, enB, IN3, IN4);
             Serial.println("translation reached");
-            num++;
-            target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
-            Serial.print("new theta: ");
-            Serial.println(target_thetas[num]);
+            translation_complete = 1;
         }
     } else {
       // Target missed, stop
@@ -223,17 +251,17 @@ void translation(float current_x, float current_y, float target_x, float target_
 
         // Corrective action
         prevDistFromTarget = 100;
-        found[num] = 0; // Reset the turn - rotate and translate again to meet the target
-        target_thetas[num] = getTheta(current_x, current_y, target_xs[num], target_ys[num]);
+        rotation_complete = 0; // Reset the turn - rotate and translate again to meet the target
+        target_angle = getTheta(current_x, current_y, target_X, target_Y);
         Serial.print("new theta: ");
-        Serial.println(target_thetas[num]);
+        Serial.println(target_angle);
     }
 }    
 
 // rotate from current orientation to target orientation
 void rotation(float current_theta, float target_theta) {
-    wheelSpeedLeft = 150;
-    wheelSpeedRight = 130;
+    wheelSpeedLeft = 130;
+    wheelSpeedRight = 110;
 
     Serial.print("rotation - current_theta: ");
     Serial.println(rad2deg(current_theta));
@@ -255,7 +283,7 @@ void rotation(float current_theta, float target_theta) {
         setMotor(STOP, 0, enB, IN3, IN4);
         Serial.println("rotation reached");
         prevDistFromTarget = 100;
-        found[num] = 1;
+        rotation_complete = 1;
     }
 }
 
