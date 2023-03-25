@@ -1,4 +1,53 @@
 #include <math.h>
+#include <SoftwareSerial.h>                      
+#include <Wire.h>
+#include "ScioSense_ENS160.h"  // ENS160 library
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include "Multichannel_Gas_GMXXX.h"
+
+// FOR SENSORS
+
+// Settings
+#define serialCommunicationSpeed 115200               
+#define DEBUG true 
+#define SEALEVELPRESSURE_HPA (1013.25)
+#define BTN_START           0                         // 1: press button to start, 0: loop
+#define BTN_PIN             WIO_5S_PRESS              // Pin that button is connected to
+#define SAMPLING_FREQ_HZ    10                         // Sampling frequency (Hz)
+#define SAMPLING_PERIOD_MS  1000 / SAMPLING_FREQ_HZ   // Sampling period (ms)
+unsigned long prevSensorMillis;
+
+// Global objects
+GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
+
+// Initialize BME
+Adafruit_BME280 bme; // I2C
+
+// ScioSense_ENS160      ens160(ENS160_I2CADDR_0);
+ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
+               
+SoftwareSerial esp8266(14, 15);
+
+struct SensorReading
+{
+    float gm_no2_v;
+    float gm_eth_v;
+    float gm_voc_v;
+    float gm_co_v;
+    unsigned long timestamp;
+    float ens_TVOC;
+    float ens_CO2;
+    float bme_temp;
+    float bme_pressure;
+    float bme_altitude;
+    float bme_humidity;
+};
+
+SensorReading sensor_reading;
+
+// FOR MOTORS
 
 // Motor 1
 #define IN1 4
@@ -18,6 +67,7 @@
 #define STOP 0
 #define BACKWARD -1
 
+
 // Constants
 const int COUNTS_PER_ROTATION = 14;
 const float GEAR_RATIO = 100.0F;
@@ -28,8 +78,8 @@ const float WHEEL_BASE = 0.142;
 const unsigned long PERIOD = 50;
 
 // Global variables
-unsigned long currentMillis;
-unsigned long prevMillis;
+unsigned long currentMotorMillis;
+unsigned long prevMotorMillis;
 
 long M1_encoder_val = 0;
 long M2_encoder_val = 0; 
@@ -73,30 +123,89 @@ int translation_complete = 1;
 // rotate to new orientation
 // translate to new coordinate
 
-void setup() {
-  reset();
-  
-  Serial.begin(115200);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(enA, OUTPUT);
-  pinMode(enB, OUTPUT);
-  
-  pinMode(M1_ENCA, INPUT);
-  pinMode(M1_ENCB, INPUT);
-  attachInterrupt(digitalPinToInterrupt(M1_ENCA), readEncoderM1, RISING);
-  
-  pinMode(M2_ENCA,INPUT);
-  pinMode(M2_ENCB,INPUT);
-  attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
+// sensor setup
+void sensorSetup() {
+    unsigned status;
+    bool label = true;
 
-  Serial.println("Starting in 5s");
-  delay(5000);
-  randomSeed(analogRead(0));
+    // grove initialization
+    gas.begin(Wire, 0x08);
+    status = bme.begin();  
+    if (!status) {
+        Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
+        Serial.print("SensorID was: 0x"); 
+        Serial.println(bme.sensorID(),16);
+        Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
+        Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
+        Serial.print("        ID of 0x60 represents a BME 280.\n");
+        Serial.print("        ID of 0x61 represents a BME 680.\n");
+    }
+
+    // ens160 initialization
+    ens160.begin();
+    if (ens160.available()) {
+        ens160.setMode(ENS160_OPMODE_STD);
+    }
+  
+    if (label) {
+        Serial.print("grove_voc1");
+        Serial.print(",");
+        Serial.print("grove_no2");
+        Serial.print(",");
+        Serial.print("grove_eth");
+        Serial.print(",");
+        Serial.print("grove_co");
+        Serial.print(",");
+        Serial.print("ens_tvoc");
+        Serial.print(",");
+        Serial.print("ens_co2");
+        Serial.print(",");
+        Serial.print("temperature");
+        Serial.print(",");
+        Serial.print("pressure");
+        Serial.print(",");
+        Serial.print("altitude");
+        Serial.print(",");
+        Serial.print("humidity");
+        Serial.print(",");
+        Serial.println("label");
+        label=false;
+    }
 }
- 
+
+// motor setup 
+void motorSetup() {
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
+    pinMode(enA, OUTPUT);
+    pinMode(enB, OUTPUT);
+    
+    pinMode(M1_ENCA, INPUT);
+    pinMode(M1_ENCB, INPUT);
+    attachInterrupt(digitalPinToInterrupt(M1_ENCA), readEncoderM1, RISING);
+    
+    pinMode(M2_ENCA,INPUT);
+    pinMode(M2_ENCB,INPUT);
+    attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
+  
+    Serial.println("Starting in 5s");
+    delay(5000);
+    randomSeed(analogRead(0));
+}
+
+// main setup
+void setup() {
+    reset();
+    Serial.begin(115200);
+    esp8266.begin(serialCommunicationSpeed);
+    InitWifiModule(); 
+    sensorSetup();
+    motorSetup();
+}
+
+// main loop
 void loop() {
     if (translation_complete == 1) {
         // generate new random x, y
@@ -107,19 +216,8 @@ void loop() {
         float c = random(target_Y * 100 + 10, target_Y * 100 + 20);
         float d = random(target_Y * 100 - 20, target_Y * 100 - 10);
         
-        if (random(2) == 0) {
-            x = a;
-        }
-        else {
-            x = b;
-        }
-
-        if (random(2) == 0) {
-            y = c;
-        }
-        else {
-            y = d;
-        }
+        x = random(2) ? a : b;
+        y = random(2) ? c : d;
         
         target_X = constrain(x, 0, 75) / 100.0;
         target_Y = constrain(y, 0, 75) / 100.0;
@@ -134,22 +232,127 @@ void loop() {
         translation_complete = 0;
     }
     checkEncoders(); 
+    readSensors();
+}
+
+// read from sensor every SAMPLING_PERIOD_MS
+void readSensors() {
+    // Take timestamp so we can hit our target frequency
+    sensor_reading.timestamp = millis();
+
+    if (sensor_reading.timestamp > prevSensorMillis + SAMPLING_PERIOD_MS) {
+        // Read from GM-X02b sensors (multichannel gas)
+        sensor_reading.gm_no2_v = gas.calcVol(gas.getGM102B());
+        sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
+        sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
+        sensor_reading.gm_co_v = gas.calcVol(gas.getGM702B());
+
+        //Read from ENS-160
+        if (ens160.available()) {
+            ens160.measure(0);
+            sensor_reading.ens_TVOC = ens160.getTVOC();
+            sensor_reading.ens_CO2 = ens160.geteCO2();
+        }
+
+        //Read from BME-280
+        sensor_reading.bme_temp = bme.readTemperature();
+        sensor_reading.bme_pressure = bme.readPressure();
+        sensor_reading.bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
+        sensor_reading.bme_humidity = bme.readHumidity();
+
+        if(esp8266.available())                                           
+         {    
+            if(esp8266.find("+IPD,"))
+            {
+             delay(1000);
+         
+             int connectionId = esp8266.read()-48;                                                
+             String webpage = String(sensor_reading.bme_temp);
+             String cipSend = "AT+CIPSEND=";
+             cipSend += connectionId;
+             cipSend += ",";
+             cipSend +=webpage.length();
+             cipSend +="\r\n";
+             
+             sendData(cipSend,1000,DEBUG);
+             sendData(webpage,1000,DEBUG);
+         
+             String closeCommand = "AT+CIPCLOSE="; 
+             closeCommand+=connectionId; // append connection id
+             closeCommand+="\r\n";    
+             sendData(closeCommand,3000,DEBUG);
+            }
+          }
+
+        Serial.print(sensor_reading.gm_voc_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_no2_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_eth_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_co_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.ens_TVOC);
+        Serial.print(",");
+        Serial.print(sensor_reading.ens_CO2);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_temp);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_pressure);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_altitude);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_humidity);
+        Serial.print(",");
+        Serial.println("ambient");
+
+        prevSensorMillis = sensor_reading.timestamp;
+
+    }
 }
 
 // odometry computations and main loop commands
 void checkEncoders() {
-  currentMillis = millis();
-  if (currentMillis > prevMillis + PERIOD) {
+  currentMotorMillis = millis();
+  if (currentMotorMillis > prevMotorMillis + PERIOD) {
+//    Serial.print("M1_encoder_val: ");
+//    Serial.println(M1_encoder_val);
+//    Serial.print("M2_encoder_val: ");
+//    Serial.println(M2_encoder_val);
+
+    
     countsLeft += M1_encoder_val;
+    if (abs(M1_encoder_val) > 1000) {
+        Serial.print("M1_encoder_val: ");
+        Serial.println(M1_encoder_val);
+        Serial.print("M2_encoder_val: ");
+        Serial.println(M2_encoder_val);
+        countsLeft = prevLeft;
+        Serial.println("fuck this, jank issue with left");
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+    }
     M1_encoder_val = 0;
+    
     countsRight += M2_encoder_val;
+    if (abs(M2_encoder_val) > 1000) {
+        Serial.print("M1_encoder_val: ");
+        Serial.println(M1_encoder_val);
+        Serial.print("M2_encoder_val: ");
+        Serial.println(M2_encoder_val);
+        countsRight = prevRight;
+        Serial.println("fuck this, jank issue with right");
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+    }
+    
     M2_encoder_val = 0;
 
     Serial.print("countsleft: ");
     Serial.println(countsLeft);
     Serial.print("countsright: ");
     Serial.println(countsRight);
-    t = (currentMillis - prevMillis) / 1000.0;
+    t = (currentMotorMillis - prevMotorMillis) / 1000.0;
 
     w_left = SCALE * 2.0 * PI * ((countsLeft - prevLeft) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
     w_right = SCALE * 2.0 * PI * ((countsRight - prevRight) / (COUNTS_PER_ROTATION * GEAR_RATIO)) / t;
@@ -184,7 +387,13 @@ void checkEncoders() {
     Serial.print("theta: ");
     Serial.println(rad2deg(state[2]));
 
-    if (rotation_complete == 0) {
+    if (sensor_reading.ens_TVOC > 5000.0) {
+        // stop if scent detected
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+    }
+
+    else if (rotation_complete == 0) {
         // rotate till theta reached
         rotation(state[2], target_angle);
     }
@@ -200,7 +409,7 @@ void checkEncoders() {
     
     prevLeft = countsLeft;
     prevRight = countsRight;
-    prevMillis = currentMillis;
+    prevMotorMillis = currentMotorMillis;
   }
 }
 
@@ -357,4 +566,43 @@ void readEncoderM2(){
     else {
         M2_encoder_val--;
     }
+}
+
+String sendData(String command, const int timeout, boolean debug)
+{
+    String response = ""; 
+    Serial.println("hii");
+    Serial.println(command);                                            
+    esp8266.print(command);                                          
+    long int time = millis();                                      
+    while( (time+timeout) > millis())                                 
+    {      
+      while(esp8266.available())                                      
+      {
+        char c = esp8266.read();                                     
+        response+=c;                                                  
+      }  
+    }    
+    if(debug)                                                        
+    {
+      Serial.print(response);
+    }    
+    return response;                                                  
+}
+
+
+void InitWifiModule()
+{
+  Serial.println("In intialization");
+  char x[] = "AT+RST\r\n";
+  sendData(x, 2000, DEBUG);                                                  
+  sendData("AT+CWJAP=\"CMU-DEVICE\",\"\"\r\n", 2000, DEBUG);        
+  delay (5000);
+  sendData("AT+CWMODE=1\r\n", 1500, DEBUG);                                             
+  delay (1500);
+  sendData("AT+CIFSR\r\n", 1500, DEBUG);                                             
+  delay (1500);
+  sendData("AT+CIPMUX=1\r\n", 1500, DEBUG);                                             
+  delay (1500);
+  sendData("AT+CIPSERVER=1,80\r\n", 1500, DEBUG);                                     
 }
