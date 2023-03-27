@@ -30,17 +30,17 @@ ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
                
 struct SensorReading
 {
-    // float gm_no2_v;
-    // float gm_eth_v;
-    // float gm_voc_v;
-    // float gm_co_v;
-    unsigned long timestamp;
-    float ens_TVOC;
-    float ens_CO2;
-    // float bme_temp;
-    // float bme_pressure;
-    // float bme_altitude;
-    // float bme_humidity;
+    // float gm_no2_v = 0.0;
+    // float gm_eth_v = 0.0;
+    // float gm_voc_v = 0.0;
+    // float gm_co_v = 0.0;
+    unsigned long timestamp = 0;
+    float ens_TVOC = 0.0;
+    float ens_CO2 = 0.0;
+    // float bme_temp = 0.0;
+    // float bme_pressure = 0.0;
+    // float bme_altitude = 0.0;
+    // float bme_humidity = 0.0;
 };
 
 SensorReading sensor_reading;
@@ -122,9 +122,9 @@ const int DETECTION_THRESHOLD = 2000;
 const int CONFIRMATION_THRESHOLD = 10000;
 const float TRANSLATION = 0.15; // Translation (m)
 
-const int NUM_SCANS = 6 // Number of scans per rotation
+const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 1; // Time stopped to sample (s)
-int scan_angle = 360 / NUM_SCANS // Angle between samples (deg)
+int scan_angle = 360 / NUM_SCANS; // Angle between samples (deg)
 const SensorReading EMPTY_SCAN_READINGS[NUM_SCANS];
 
 bool scent_detected = false;
@@ -133,6 +133,7 @@ bool scan_finished = false;
 SensorReading scan_readings[NUM_SCANS];
 int curr_scan = 0;
 int curr_samples = 0;
+int num_samples = 0;
 
 // generate a random x, y coordinate
 // compute theta between current x, y and generated
@@ -223,7 +224,7 @@ void setup() {
 void loop() {
     if (scent_confirmed) {
         delay(10000);
-        reset()
+        reset();
     } else if (translation_complete == 1 && !scent_detected) {
         /* RANDOM SEARCH MODE */
 
@@ -252,7 +253,7 @@ void loop() {
     } else if (translation_complete == 1 && scent_detected) {
         /* TARGETED SEARCH MODE */
         
-        if (curr_scans < NUM_SCANS) { // SCANNING IN-PLACE
+        if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
             // If sufficient samples have been taken, rotate to next position
             if (num_samples >= SCAN_TIME * SAMPLING_FREQ_HZ) {
                 num_samples = 0;
@@ -288,11 +289,6 @@ void readSensors() {
     sensor_reading.timestamp = millis();
 
     if (sensor_reading.timestamp > prevSensorMillis + SAMPLING_PERIOD_MS) {
-        // Read from GM-X02b sensors (multichannel gas)
-        // sensor_reading.gm_no2_v = gas.calcVol(gas.getGM102B());
-        // sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
-        // sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
-        // sensor_reading.gm_co_v = gas.calcVol(gas.getGM702B());
 
         //Read from ENS-160
         if (ens160.available()) {
@@ -301,34 +297,10 @@ void readSensors() {
             sensor_reading.ens_CO2 = ens160.geteCO2();
         }
 
-        //Read from BME-280
-        // sensor_reading.bme_temp = bme.readTemperature();
-        // sensor_reading.bme_pressure = bme.readPressure();
-        // sensor_reading.bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
-        // sensor_reading.bme_humidity = bme.readHumidity();
-
-        // Serial.print(sensor_reading.gm_voc_v);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.gm_no2_v);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.gm_eth_v);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.gm_co_v);
-        // Serial.print(",");
         Serial.print("\nTVOC: ");
         Serial.println(sensor_reading.ens_TVOC);
         Serial.print("\nCO2:");
         Serial.println(sensor_reading.ens_CO2);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.bme_temp);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.bme_pressure);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.bme_altitude);
-        // Serial.print(",");
-        // Serial.print(sensor_reading.bme_humidity);
-        // Serial.print(",");
-        // Serial.println("ambient");
 
         if (sensor_reading.ens_TVOC > CONFIRMATION_THRESHOLD) {
             scent_confirmed = true;
@@ -341,7 +313,7 @@ void readSensors() {
         if (scent_detected && num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ)) {
             scan_readings[curr_scan].ens_TVOC += sensor_reading.ens_TVOC;
             scan_readings[curr_scan].ens_CO2 += sensor_reading.ens_CO2;
-            num_samples ++;
+            num_samples++;
         }
         prevSensorMillis = sensor_reading.timestamp;
     }
@@ -351,11 +323,6 @@ void readSensors() {
 void checkEncoders() {
   currentMotorMillis = millis();
   if (currentMotorMillis > prevMotorMillis + PERIOD) {
-//    Serial.print("M1_encoder_val: ");
-//    Serial.println(M1_encoder_val);
-//    Serial.print("M2_encoder_val: ");
-//    Serial.println(M2_encoder_val);
-
     
     countsLeft += M1_encoder_val;
     if (abs(M1_encoder_val) > 1000) {
@@ -467,7 +434,9 @@ void reset() {
     scent_detected = false;
     scent_confirmed = false;
     scan_finished = false;
-    scan_readings[NUM_SCANS] = EMPTY_SCAN_READINGS;
+    for (int i = 0; i < NUM_SCANS; i++) {
+        scan_readings[i] = EMPTY_SCAN_READINGS[i];
+    }
     curr_scan = 0;
     curr_samples = 0;
 }
