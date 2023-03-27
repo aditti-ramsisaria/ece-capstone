@@ -115,7 +115,25 @@ int translation_complete = 1;
 
 // right - M2 - B
 // left - M1 - A
- 
+
+// FOR SCANNING
+
+const int DETECTION_THRESHOLD = 2000;
+const int CONFIRMATION_THRESHOLD = 10000;
+const float TRANSLATION = 0.15; // Translation (m)
+
+const int NUM_SCANS = 6 // Number of scans per rotation
+const int SCAN_TIME = 1; // Time stopped to sample (s)
+int scan_angle = 360 / NUM_SCANS // Angle between samples (deg)
+const SensorReading EMPTY_SCAN_READINGS[NUM_SCANS];
+
+bool scent_detected = false;
+bool scent_confirmed = false;
+bool scan_finished = false;
+SensorReading scan_readings[NUM_SCANS];
+int curr_scan = 0;
+int curr_samples = 0;
+
 // generate a random x, y coordinate
 // compute theta between current x, y and generated
 // rotate to new orientation
@@ -203,7 +221,12 @@ void setup() {
 
 // main loop
 void loop() {
-    if (translation_complete == 1) {
+    if (scent_confirmed) {
+        delay(10000);
+        reset()
+    } else if (translation_complete == 1 && !scent_detected) {
+        /* RANDOM SEARCH MODE */
+
         // generate new random x, y
         float x, y;
         
@@ -224,6 +247,34 @@ void loop() {
         Serial.println(c);
         Serial.println(d);
         target_angle = getTheta(state[0], state[1], target_X, target_Y);
+        rotation_complete = 0;
+        translation_complete = 0;
+    } else if (translation_complete == 1 && scent_detected) {
+        /* TARGETED SEARCH MODE */
+        
+        if (curr_scans < NUM_SCANS) { // SCANNING IN-PLACE
+            // If sufficient samples have been taken, rotate to next position
+            if (num_samples >= SCAN_TIME * SAMPLING_FREQ_HZ) {
+                num_samples = 0;
+                curr_scan ++;
+                target_angle = scan_angle * 180 / PI;
+            }
+        } else { // MOVING TOWARDS SCENT
+            // Find direction of highest TVOC concentration
+            int max_i = 0;
+            int max_val = 0;
+            for (int i = 0; i < NUM_SCANS; i++) {
+                int val = scan_readings[i].ens_TVOC;
+                if (val > max_val) {
+                    max_i = i;
+                    max_val = val;
+                }
+            }
+            // Set new coordinates in direction of highest concentration
+            target_angle = (scan_angle * max_i) * 180 / PI;
+            target_X = state[0] + TRANSLATION * cos(target_angle);
+            target_Y = state[1] + TRANSLATION * sin(target_angle);
+        }
         rotation_complete = 0;
         translation_complete = 0;
     }
@@ -279,8 +330,20 @@ void readSensors() {
         // Serial.print(",");
         // Serial.println("ambient");
 
-        prevSensorMillis = sensor_reading.timestamp;
+        if (sensor_reading.ens_TVOC > CONFIRMATION_THRESHOLD) {
+            scent_confirmed = true;
+            scent_detected = false;
+        } else if (sensor_reading.ens_TVOC > DETECTION_THRESHOLD) {
+            scent_detected = true;
+        }
 
+        // Save values
+        if (scent_detected && num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ)) {
+            scan_readings[curr_scan].ens_TVOC += sensor_reading.ens_TVOC;
+            scan_readings[curr_scan].ens_CO2 += sensor_reading.ens_CO2;
+            num_samples ++;
+        }
+        prevSensorMillis = sensor_reading.timestamp;
     }
 }
 
@@ -400,6 +463,13 @@ void reset() {
     countsRight = 0;
     rotation_complete = 1;
     translation_complete = 1;
+    
+    scent_detected = false;
+    scent_confirmed = false;
+    scan_finished = false;
+    scan_readings[NUM_SCANS] = EMPTY_SCAN_READINGS;
+    curr_scan = 0;
+    curr_samples = 0;
 }
 
 // translate from current coordinate to target coordinate
