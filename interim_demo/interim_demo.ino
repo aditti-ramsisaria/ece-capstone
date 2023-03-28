@@ -119,18 +119,18 @@ int translation_complete = 1;
 // FOR SCANNING
 
 const int DETECTION_THRESHOLD = 2000;
-const int CONFIRMATION_THRESHOLD = 10000;
+const int CONFIRMATION_THRESHOLD = 30000;
 const float TRANSLATION = 0.15; // Translation (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 1; // Time stopped to sample (s)
-int scan_angle = 360 / NUM_SCANS; // Angle between samples (deg)
+int scan_angle = 180 / NUM_SCANS; // Angle between samples (deg)
 const SensorReading EMPTY_SCAN_READINGS[NUM_SCANS];
 
 bool scent_detected = false;
 bool scent_confirmed = false;
-bool scan_finished = false;
 SensorReading scan_readings[NUM_SCANS];
+bool scan_mode = false;
 int curr_scan = 0;
 int curr_samples = 0;
 int num_samples = 0;
@@ -223,6 +223,9 @@ void setup() {
 // main loop
 void loop() {
     if (scent_confirmed) {
+        Serial.println("SCENT CONFIRMED");
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
         delay(10000);
         reset();
     } else if (translation_complete == 1 && !scent_detected) {
@@ -252,16 +255,37 @@ void loop() {
         translation_complete = 0;
     } else if (translation_complete == 1 && scent_detected) {
         /* TARGETED SEARCH MODE */
-        
+        Serial.println("\n\n\n-------***-------TARGETED SEARCH MODE-------***-------\n\n\n");        
         if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
+           Serial.print("\n------------------------------\n");
+           Serial.print("Scan: ");
+           Serial.println(curr_scan);
+           Serial.print("------------------------------\n");
             // If sufficient samples have been taken, rotate to next position
+            scan_mode = true;
             if (num_samples >= SCAN_TIME * SAMPLING_FREQ_HZ) {
+                Serial.print("\n------------------------------\n");
+                Serial.print("Num samples before reset: ");
+                Serial.println(num_samples);
+                Serial.print("------------------------------\n");
                 num_samples = 0;
+//                rotation_complete = 0;
                 curr_scan ++;
-                target_angle = scan_angle * 180 / PI;
+                target_angle = fmod(state[2] + ((scan_angle) * PI / 180.0), 2*PI);
+                Serial.print("\n------------------------------\n");
+                Serial.print("target_angle (deg): ");
+                Serial.println(rad2deg(target_angle));
+                Serial.print("current_angle (deg): ");
+                Serial.println(rad2deg(state[2]));
+                Serial.print("desired angle: ");
+                Serial.println(rad2deg((scan_angle) * PI / 180.0));
+                Serial.print("scan angle: ");
+                Serial.println(scan_angle);
+                Serial.print("------------------------------\n");
             }
         } else { // MOVING TOWARDS SCENT
-            // Find direction of highest TVOC concentration
+            // Find direction off highest TVOC concentration
+            scan_mode = false;
             int max_i = 0;
             int max_val = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
@@ -310,7 +334,15 @@ void readSensors() {
         }
 
         // Save values
-        if (scent_detected && num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ)) {
+        Serial.println("__--------------------+++++");
+        Serial.print("Num samples: ");
+        Serial.println(num_samples);
+        Serial.print("Scan mode?: ");
+        Serial.println(scan_mode);
+        Serial.print("Rotation complete?: ");
+        Serial.println(rotation_complete);
+        Serial.println("__--------------------+++++");
+        if (scan_mode && (rotation_complete == 1) && (num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ))) {
             scan_readings[curr_scan].ens_TVOC += sensor_reading.ens_TVOC;
             scan_readings[curr_scan].ens_CO2 += sensor_reading.ens_CO2;
             num_samples++;
@@ -390,17 +422,16 @@ void checkEncoders() {
     Serial.print("theta: ");
     Serial.println(rad2deg(state[2]));
 
-    if (sensor_reading.ens_TVOC > 5000.0) {
-        // stop if scent detected
-        setMotor(STOP, 0, enA, IN1, IN2);
-        setMotor(STOP, 0, enB, IN3, IN4);
-    }
+    // if (sensor_reading.ens_TVOC > 5000.0) {
+    //     // stop if scent detected
+    //     setMotor(STOP, 0, enA, IN1, IN2);
+    //     setMotor(STOP, 0, enB, IN3, IN4);
+    // }
 
-    else if (rotation_complete == 0) {
+    if (rotation_complete == 0) {
         // rotate till theta reached
         rotation(state[2], target_angle);
     }
-
     else if (rotation_complete == 1) {
         // translate till x, y, reached
         translation(state[0], state[1], target_X, target_Y);
@@ -433,7 +464,7 @@ void reset() {
     
     scent_detected = false;
     scent_confirmed = false;
-    scan_finished = false;
+    scan_mode = false;
     for (int i = 0; i < NUM_SCANS; i++) {
         scan_readings[i] = EMPTY_SCAN_READINGS[i];
     }
