@@ -299,43 +299,53 @@ void loop() {
             }
         } else { // MOVING TOWARDS SCENT
             scan_mode = false;
-            // Find direction off highest TVOC concentration
+            
+            // Find direction of highest concentration
             int max_i = 0;
             int max_val = 0;
+            int low_detection_count = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
                 int val = scan_readings[i].ens_TVOC;
+                if (val < DETECTION_THRESHOLD){
+                  low_detection_count++;
+                }
                 if (val > max_val) {
                     max_i = i;
                     max_val = val;
                 }
             }
             
-            // Set new coordinates in direction of highest concentration
-            target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
-            target_X = state[0] + TRANSLATION * cos(target_angle);
-            target_Y = state[1] + TRANSLATION * sin(target_angle);
-
-            Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
-            Serial.print("max i value (best scan): ");
-            Serial.println(max_i);
-            Serial.print("curr angle: ");
-            Serial.println(rad2deg(state[2]));
-            Serial.print("target angle: ");
-            Serial.println(rad2deg(target_angle));
-            Serial.print("target_X: ");
-            Serial.println(target_X);
-            Serial.print("target_Y: ");
-            Serial.println(target_Y);
-            Serial.print("------------------------------\n");
-
-            for (int i = 0; i < NUM_SCANS; i++) {
-                scan_readings[i] = EMPTY_SCAN_READINGS[i];
+            // Reverts back to RANDOM mode if low detection levels
+            if (low_detection_count > (NUM_SCANS-1)) {
+                scent_detected = false;
+            } else {
+                // Set new coordinates in direction of highest concentration
+                target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
+                target_X = state[0] + TRANSLATION * cos(target_angle);
+                target_Y = state[1] + TRANSLATION * sin(target_angle);
+    
+                Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
+                Serial.print("max i value (best scan): ");
+                Serial.println(max_i);
+                Serial.print("curr angle: ");
+                Serial.println(rad2deg(state[2]));
+                Serial.print("target angle: ");
+                Serial.println(rad2deg(target_angle));
+                Serial.print("target_X: ");
+                Serial.println(target_X);
+                Serial.print("target_Y: ");
+                Serial.println(target_Y);
+                Serial.print("------------------------------\n");
+    
+                for (int i = 0; i < NUM_SCANS; i++) {
+                    scan_readings[i] = EMPTY_SCAN_READINGS[i];
+                }
+                curr_scan = -1;
+                num_samples = 0;
+    
+                rotation_complete = 0;
+                translation_complete = 0;
             }
-            curr_scan = -1;
-            num_samples = 0;
-
-            rotation_complete = 0;
-            translation_complete = 0;
         }
     }
     checkEncoders(); 
