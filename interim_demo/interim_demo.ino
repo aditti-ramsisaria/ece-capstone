@@ -1,11 +1,11 @@
 #include <math.h>
 #include <SoftwareSerial.h>                      
 #include <Wire.h>
-#include "ScioSense_ENS160.h"  // ENS160 library
+// include "ScioSense_ENS160.h"  // ENS160 library
 #include <SPI.h>
 // include <Adafruit_Sensor.h>
 // include <Adafruit_BME280.h>
-// include "Multichannel_Gas_GMXXX.h"
+#include "Multichannel_Gas_GMXXX.h"
 
 // FOR SENSORS
 
@@ -20,23 +20,23 @@
 unsigned long prevSensorMillis;
 
 // Global objects
-// GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
+GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
 
 // Initialize BME
 // Adafruit_BME280 bme; // I2C
 
 // ScioSense_ENS160      ens160(ENS160_I2CADDR_0);
-ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
+// ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
                
 struct SensorReading
 {
     // float gm_no2_v = 0.0;
-    // float gm_eth_v = 0.0;
-    // float gm_voc_v = 0.0;
+    float gm_eth_v = 0.0;
+    float gm_voc_v = 0.0;
     // float gm_co_v = 0.0;
     unsigned long timestamp = 0;
-    float ens_TVOC = 0.0;
-    float ens_CO2 = 0.0;
+    // float ens_TVOC = 0.0;
+    // float ens_CO2 = 0.0;
     // float bme_temp = 0.0;
     // float bme_pressure = 0.0;
     // float bme_altitude = 0.0;
@@ -44,6 +44,8 @@ struct SensorReading
 };
 
 SensorReading sensor_reading;
+SensorReading sensor_readings_per_second[SAMPLING_FREQ_HZ];
+int sample_count = 0; // goes from 0 to SAMPLING_FREQ_HZ - 1
 
 // FOR MOTORS
 
@@ -118,12 +120,12 @@ int translation_complete = 1;
 
 // FOR SCANNING
 
-const int DETECTION_THRESHOLD = 2000;
-const int CONFIRMATION_THRESHOLD = 30000;
+const float DETECTION_THRESHOLD = 3.3;
+const float CONFIRMATION_THRESHOLD = 4;
 const float TRANSLATION = 0.15; // Translation (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
-const int SCAN_TIME = 2; // Time stopped to sample (s)
+const int SCAN_TIME = 3; // Time stopped to sample (s)
 int scan_angle = 180 / NUM_SCANS; // Angle between samples (deg)
 const SensorReading EMPTY_SCAN_READINGS[NUM_SCANS];
 
@@ -146,7 +148,8 @@ void sensorSetup() {
     bool label = true;
 
     // grove initialization
-    // gas.begin(Wire, 0x08);
+    gas.begin(Wire, 0x08);
+    
     // status = bme.begin();  
     // if (!status) {
     //     Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
@@ -159,24 +162,24 @@ void sensorSetup() {
     // }
 
     // ens160 initialization
-    ens160.begin();
-    if (ens160.available()) {
-        ens160.setMode(ENS160_OPMODE_STD);
-    }
+    // ens160.begin();
+    // if (ens160.available()) {
+    //     ens160.setMode(ENS160_OPMODE_STD);
+    // }
   
     if (label) {
-        // Serial.print("grove_voc1");
-        // Serial.print(",");
+        Serial.print("grove_voc1");
+        Serial.print(",");
         // Serial.print("grove_no2");
         // Serial.print(",");
-        // Serial.print("grove_eth");
-        // Serial.print(",");
+        Serial.print("grove_eth");
+        Serial.print(",");
         // Serial.print("grove_co");
         // Serial.print(",");
-        Serial.print("ens_tvoc");
-        Serial.print(",");
-        Serial.print("ens_co2");
-        Serial.print(",");
+        // Serial.print("ens_tvoc");
+        // Serial.print(",");
+        // Serial.print("ens_co2");
+        // Serial.print(",");
         // Serial.print("temperature");
         // Serial.print(",");
         // Serial.print("pressure");
@@ -223,16 +226,18 @@ void setup() {
 // main loop
 void loop() {
     if (scent_confirmed) {
+        /* scent confirmed after detetction and scanning, stop motors */
         Serial.println("SCENT CONFIRMED");
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
         delay(10000);
         reset();
-    } else if (translation_complete == 1 && !scent_detected) {
-        Serial.print("RANDOMMMMMM ______kfdhfsj");
-        /* RANDOM SEARCH MODE */
+    } 
+    else if (translation_complete == 1 && !scent_detected) {
+        Serial.print("---------------------- RANDOM EXPLORATION MODE ----------------------");
+        /* RANDOM SEARCH MODE 
+        Compute next random x, y to translate to */
 
-        // generate new random x, y
         float x, y;
         
         float a = random(target_X * 100 + 10, target_X * 100 + 20);
@@ -254,8 +259,10 @@ void loop() {
         target_angle = getTheta(state[0], state[1], target_X, target_Y);
         rotation_complete = 0;
         translation_complete = 0;
-    } else if (translation_complete == 1 && scent_detected) {
-        /* TARGETED SEARCH MODE */
+    } 
+    else if (translation_complete == 1 && scent_detected) {
+        /* TARGETED SEARCH MODE 
+        Scent has been detected, scan different angles in position*/
         Serial.println("\n\n\n-------***-------TARGETED SEARCH MODE-------***-------\n\n\n");        
         if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
             scan_mode = true;
@@ -266,6 +273,7 @@ void loop() {
             // If sufficient samples have been taken, rotate to next position
             
             if (curr_scan == -1) {
+                // first scan, initialize
                 curr_scan++;
                 num_samples = 0;
                 scan_readings[0] = EMPTY_SCAN_READINGS[0];
@@ -274,30 +282,31 @@ void loop() {
                 translation_complete = 1;
             }
 
-            // if (mod(num_samples, SCAN_TIME * SAMPLING_FREQ_HZ) == 0) {
             if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
-                Serial.print("------------------------------\n");
-                Serial.print("Num samples before reset: ");
-                Serial.println(num_samples);
-                Serial.print("Prev scan number: ");
-                Serial.println(curr_scan);
+                // completed samples for this scan, set to next scan
+                // Serial.print("------------------------------\n");
+                // Serial.print("Num samples before reset: ");
+                // Serial.println(num_samples);
+                // Serial.print("Prev scan number: ");
+                // Serial.println(curr_scan);
 
 
                 num_samples = 0;
-                curr_scan ++;
+                curr_scan++;
                 target_angle = fmod(state[2] + ((scan_angle) * PI / 180.0), 2*PI);
 
-                Serial.print("New scan number: ");
-                Serial.println(curr_scan);
-                Serial.print("current_angle (deg): ");
-                Serial.println(rad2deg(state[2]));
-                Serial.print("target_angle (deg): ");
-                Serial.println(rad2deg(target_angle));
-                Serial.print("------------------------------\n");
+                // Serial.print("New scan number: ");
+                // Serial.println(curr_scan);
+                // Serial.print("current_angle (deg): ");
+                // Serial.println(rad2deg(state[2]));
+                // Serial.print("target_angle (deg): ");
+                // Serial.println(rad2deg(target_angle));
+                // Serial.print("------------------------------\n");
                 rotation_complete = 0;
                 translation_complete = 1;
             }
-        } else { // MOVING TOWARDS SCENT
+        } 
+        else { // MOVING TOWARDS SCENT
             scan_mode = false;
             
             // Find direction of highest concentration
@@ -305,7 +314,7 @@ void loop() {
             int max_val = 0;
             int low_detection_count = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
-                int val = scan_readings[i].ens_TVOC;
+                int val = scan_readings[i].gm_voc_v;
                 if (val < DETECTION_THRESHOLD){
                   low_detection_count++;
                 }
@@ -316,40 +325,78 @@ void loop() {
             }
             
             // Reverts back to RANDOM mode if low detection levels
-            if (low_detection_count > (NUM_SCANS-1)) {
+            if (low_detection_count > (NUM_SCANS - 1)) {
                 scent_detected = false;
-            } else {
+            } 
+            else {
                 // Set new coordinates in direction of highest concentration
                 target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
                 target_X = state[0] + TRANSLATION * cos(target_angle);
                 target_Y = state[1] + TRANSLATION * sin(target_angle);
     
-                Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
-                Serial.print("max i value (best scan): ");
-                Serial.println(max_i);
-                Serial.print("curr angle: ");
-                Serial.println(rad2deg(state[2]));
-                Serial.print("target angle: ");
-                Serial.println(rad2deg(target_angle));
-                Serial.print("target_X: ");
-                Serial.println(target_X);
-                Serial.print("target_Y: ");
-                Serial.println(target_Y);
-                Serial.print("------------------------------\n");
+                // Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
+                // Serial.print("max i value (best scan): ");
+                // Serial.println(max_i);
+                // Serial.print("curr angle: ");
+                // Serial.println(rad2deg(state[2]));
+                // Serial.print("target angle: ");
+                // Serial.println(rad2deg(target_angle));
+                // Serial.print("target_X: ");
+                // Serial.println(target_X);
+                // Serial.print("target_Y: ");
+                // Serial.println(target_Y);
+                // Serial.print("------------------------------\n");
     
-                for (int i = 0; i < NUM_SCANS; i++) {
-                    scan_readings[i] = EMPTY_SCAN_READINGS[i];
-                }
-                curr_scan = -1;
-                num_samples = 0;
-    
-                rotation_complete = 0;
-                translation_complete = 0;
             }
+            // reset for next time targeted search mode is reached
+            for (int i = 0; i < NUM_SCANS; i++) {
+                scan_readings[i] = EMPTY_SCAN_READINGS[i];
+            }
+            curr_scan = -1;
+            num_samples = 0;
+
+            rotation_complete = 0;
+            translation_complete = 0;
         }
     }
     checkEncoders(); 
     readSensors();
+}
+
+float bestFitSlope(SensorReading *sensor_readings_set, int sensor_used) {
+    float sum_x = 450.0, sum_y = 0.0, sum_x2 = 28500.0, sum_y2 = 0.0, sum_xy = 0.0, slope = 0.0; 
+    float y = 0.0;
+    for (int i = 0; i < SAMPLING_FREQ_HZ; i++) {
+        //sum_x += (SAMPLING_PERIOD_MS * i);
+        //sum_x2 += (SAMPLING_PERIOD_MS * SAMPLING_PERIOD_MS * i * i);
+        // if (sensor_used == 0) {
+        //     // ens TVOC
+        //     y = sensor_readings_set[i].ens_TVOC;
+        // }
+        // else if (sensor_used == 1) {
+        //     // ens CO2
+        //     y = sensor_readings_set[i].ens_CO2;
+        // }
+        if (sensor_used == 2) {
+            // grove voc
+            y = (100.0 * sensor_readings_set[i].gm_voc_v);
+        }
+        else if (sensor_used == 3) {
+            // grove ethanol
+            y = sensor_readings_set[i].gm_eth_v;
+        }
+        sum_y += y;
+        sum_y2 += (y * y);
+        sum_xy += (SAMPLING_PERIOD_MS * i * y / 10.0);
+    }
+    Serial.println(sum_x);
+    Serial.println(sum_x2);
+    Serial.println(sum_y);
+    Serial.println(sum_y2);
+    Serial.println(sum_xy);
+
+    slope = (SAMPLING_FREQ_HZ * sum_xy - sum_x * sum_y) / (SAMPLING_FREQ_HZ * sum_x2 - sum_x * sum_x);
+    return slope;
 }
 
 // read from sensor every SAMPLING_PERIOD_MS
@@ -358,40 +405,69 @@ void readSensors() {
     sensor_reading.timestamp = millis();
 
     if (sensor_reading.timestamp > prevSensorMillis + SAMPLING_PERIOD_MS) {
+        
+         // Read from GM-X02b sensors (multichannel gas)
+        // sensor_readings_per_second[sample_count].gm_no2_v = gas.calcVol(gas.getGM102B());
+        sensor_readings_per_second[sample_count].gm_eth_v = gas.calcVol(gas.getGM302B());
+        sensor_readings_per_second[sample_count].gm_voc_v = gas.calcVol(gas.getGM502B());
+        // sensor_readings_per_second[sample_count].gm_co_v = gas.calcVol(gas.getGM702B());
+        // sensor_reading.gm_no2_v = gas.calcVol(gas.getGM102B());
+        sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
+        sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
+        // sensor_reading.gm_co_v = gas.calcVol(gas.getGM702B());
 
         //Read from ENS-160
-        if (ens160.available()) {
-            ens160.measure(0);
-            sensor_reading.ens_TVOC = ens160.getTVOC();
-            sensor_reading.ens_CO2 = ens160.geteCO2();
-        }
+        // if (ens160.available()) {
+        //     ens160.measure(0);
+        //     sensor_readings_per_second[sample_count].ens_TVOC = ens160.getTVOC();
+        //     sensor_readings_per_second[sample_count].ens_CO2 = ens160.geteCO2();
+        //     sensor_reading.ens_TVOC = ens160.getTVOC();
+        //     sensor_reading.ens_CO2 = ens160.geteCO2();
+        // }
 
-        Serial.print("\nTVOC: ");
-        Serial.println(sensor_reading.ens_TVOC);
-        Serial.print("\nCO2:");
-        Serial.println(sensor_reading.ens_CO2);
+        // Serial.print("\nTVOC: ");
+        // Serial.println(sensor_reading.ens_TVOC);
+        // Serial.print("\nCO2:");
+        // Serial.println(sensor_reading.ens_CO2);
+        Serial.print("\nGrove Ethanol:");
+        Serial.println(sensor_reading.gm_eth_v);
+        Serial.print("\nGrove VOC:");
+        Serial.println(sensor_reading.gm_voc_v);
 
-        if (sensor_reading.ens_TVOC > CONFIRMATION_THRESHOLD) {
+        if (sensor_reading.gm_voc_v > CONFIRMATION_THRESHOLD) {
             scent_confirmed = true;
             scent_detected = false;
-        } else if (sensor_reading.ens_TVOC > DETECTION_THRESHOLD) {
-            scent_detected = true;
+        } 
+        // else if (sensor_reading.ens_TVOC > DETECTION_THRESHOLD) {
+        //     scent_detected = true;
+        // }
+        if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
+            float slope = bestFitSlope(sensor_readings_per_second, 2);
+            Serial.print("slope over a second: ");
+            Serial.println(slope);
+            if (slope > 0.02) {
+                Serial.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+                scent_detected = true;
+            }
         }
 
         // Save values
-        Serial.println("__--------------------+++++");
-        Serial.print("Num samples: ");
-        Serial.println(num_samples);
-        Serial.print("Scan mode?: ");
-        Serial.println(scan_mode);
-        Serial.print("Rotation complete?: ");
-        Serial.println(rotation_complete);
-        Serial.println("__--------------------+++++");
+        // Serial.println("__--------------------+++++");
+        // Serial.print("Num samples: ");
+        // Serial.println(num_samples);
+        // Serial.print("Scan mode?: ");
+        // Serial.println(scan_mode);
+        // Serial.print("Rotation complete?: ");
+        // Serial.println(rotation_complete);
+        // Serial.println("__--------------------+++++");
         if (scan_mode && (rotation_complete == 1) && (num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ))) {
-            scan_readings[curr_scan].ens_TVOC += sensor_reading.ens_TVOC;
-            scan_readings[curr_scan].ens_CO2 += sensor_reading.ens_CO2;
+            // scan_readings[curr_scan].ens_TVOC += (sensor_reading.ens_TVOC / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            // scan_readings[curr_scan].ens_CO2 += (sensor_reading.ens_CO2 / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            scan_readings[curr_scan].gm_eth_v += (sensor_reading.gm_eth_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            scan_readings[curr_scan].gm_voc_v += (sensor_reading.gm_voc_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
             num_samples++;
         }
+        sample_count = (sample_count + 1) % SAMPLING_FREQ_HZ;
         prevSensorMillis = sensor_reading.timestamp;
     }
 }
@@ -485,6 +561,7 @@ void checkEncoders() {
     prevMotorMillis = currentMotorMillis;
   }
 }
+
 
 // reset state
 void reset() {

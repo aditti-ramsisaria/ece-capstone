@@ -34,7 +34,7 @@ Adafruit_BME280 bme; // I2C
 #define BTN_PIN             WIO_5S_PRESS              // Pin that button is connected to
 #define SAMPLING_FREQ_HZ    10                         // Sampling frequency (Hz)
 #define SAMPLING_PERIOD_MS  1000 / SAMPLING_FREQ_HZ   // Sampling period (ms)
-#define NUM_SAMPLES         8                         // 8 samples at 4 Hz is 2 seconds
+#define NUM_SAMPLES         10                         // 8 samples at 4 Hz is 2 seconds
 
 // Global objects
 GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
