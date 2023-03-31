@@ -9,6 +9,10 @@
 
 // FOR SENSORS
 
+#define trigPin 12
+#define echoPin 13
+const int DISTANCE_THRESHOLD = 5; // cm
+
 // Settings
 #define serialCommunicationSpeed 115200               
 #define DEBUG true 
@@ -147,6 +151,9 @@ void sensorSetup() {
     unsigned status;
     bool label = true;
 
+    pinMode(trigPin, OUTPUT);
+    pinMode(echoPin, INPUT);
+
     // grove initialization
     gas.begin(Wire, 0x08);
     
@@ -223,6 +230,17 @@ void setup() {
     motorSetup();
 }
 
+void computeRandomConfig(float current_theta, float current_x, float current_y) {
+    // compute a new orientation to turn to in random exploration within 180 deg of current
+    // computes target cooridnates using new theta
+    target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
+    float new_distance = random(15.0, 20.0) / 100.0;
+    float new_x = current_x + new_distance * cos(target_angle);
+    float new_y = current_y + new_distance * sin(target_angle);
+    target_X = constrain(new_x, 0.0, 0.75);
+    target_Y = constrain(new_y, 0.0, 0.75);
+}
+
 // main loop
 void loop() {
     if (scent_confirmed) {
@@ -238,25 +256,32 @@ void loop() {
         /* RANDOM SEARCH MODE 
         Compute next random x, y to translate to */
 
-        float x, y;
+        // float x, y;
         
-        float a = random(target_X * 100 + 10, target_X * 100 + 20);
-        float b = random(target_X * 100 - 20, target_X * 100 - 10);
-        float c = random(target_Y * 100 + 10, target_Y * 100 + 20);
-        float d = random(target_Y * 100 - 20, target_Y * 100 - 10);
+        // float a = random(target_X * 100 + 10, target_X * 100 + 20);
+        // float b = random(target_X * 100 - 20, target_X * 100 - 10);
+        // float c = random(target_Y * 100 + 10, target_Y * 100 + 20);
+        // float d = random(target_Y * 100 - 20, target_Y * 100 - 10);
         
-        x = random(2) ? a : b;
-        y = random(2) ? c : d;
+        // x = random(2) ? a : b;
+        // y = random(2) ? c : d;
         
-        target_X = constrain(x, 0, 75) / 100.0;
-        target_Y = constrain(y, 0, 75) / 100.0;
+        // target_X = constrain(x, 0, 75) / 100.0;
+        // target_Y = constrain(y, 0, 75) / 100.0;
+        // Serial.print("new x: ");
+        // Serial.println(target_X);
+        // Serial.print("new y: ");
+        // Serial.println(target_Y);
+        // Serial.println(c);
+        // Serial.println(d);
+        // target_angle = getTheta(state[0], state[1], target_X, target_Y);
+        computeRandomConfig(state[2], state[0], state[1]);
         Serial.print("new x: ");
         Serial.println(target_X);
         Serial.print("new y: ");
         Serial.println(target_Y);
-        Serial.println(c);
-        Serial.println(d);
-        target_angle = getTheta(state[0], state[1], target_X, target_Y);
+        Serial.print("new angle: ");
+        Serial.println(rad2deg(target_angle));
         rotation_complete = 0;
         translation_complete = 0;
     } 
@@ -290,6 +315,12 @@ void loop() {
                 // Serial.print("Prev scan number: ");
                 // Serial.println(curr_scan);
 
+                Serial.print("------------------------finished scan: ");
+                Serial.println(curr_scan);
+                Serial.print("avg VOC: ");
+                Serial.println(scan_readings[curr_scan].gm_voc_v);
+                Serial.print("avg eth: ");
+                Serial.println(scan_readings[curr_scan].gm_eth_v);
 
                 num_samples = 0;
                 curr_scan++;
@@ -311,13 +342,23 @@ void loop() {
             
             // Find direction of highest concentration
             int max_i = 0;
-            int max_val = 0;
+            float max_val = 0.0;
+            float val = 0.0;
             int low_detection_count = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
-                int val = scan_readings[i].gm_voc_v;
-                if (val < DETECTION_THRESHOLD){
-                  low_detection_count++;
+                float slope;
+                val = scan_readings[i].gm_voc_v;
+                float prev_val = scan_readings[i - 1].gm_voc_v;
+                if (i > 0) {
+                    slope = (val - prev_val) / (SCAN_TIME);
+                    Serial.print("****SLOPE***** at ");
+                    Serial.print(i);
+                    Serial.println(slope);
+                    if (slope <= 0.0) {
+                        low_detection_count++;
+                    }
                 }
+                Serial.println(val);
                 if (val > max_val) {
                     max_i = i;
                     max_val = val;
@@ -325,7 +366,7 @@ void loop() {
             }
             
             // Reverts back to RANDOM mode if low detection levels
-            if (low_detection_count > (NUM_SCANS - 1)) {
+            if (low_detection_count == (NUM_SCANS - 1)) {
                 scent_detected = false;
             } 
             else {
@@ -334,18 +375,18 @@ void loop() {
                 target_X = state[0] + TRANSLATION * cos(target_angle);
                 target_Y = state[1] + TRANSLATION * sin(target_angle);
     
-                // Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
-                // Serial.print("max i value (best scan): ");
-                // Serial.println(max_i);
-                // Serial.print("curr angle: ");
-                // Serial.println(rad2deg(state[2]));
-                // Serial.print("target angle: ");
-                // Serial.println(rad2deg(target_angle));
-                // Serial.print("target_X: ");
-                // Serial.println(target_X);
-                // Serial.print("target_Y: ");
-                // Serial.println(target_Y);
-                // Serial.print("------------------------------\n");
+                Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
+                Serial.print("max i value (best scan): ");
+                Serial.println(max_i);
+                Serial.print("curr angle: ");
+                Serial.println(rad2deg(state[2]));
+                Serial.print("target angle: ");
+                Serial.println(rad2deg(target_angle));
+                Serial.print("target_X: ");
+                Serial.println(target_X);
+                Serial.print("target_Y: ");
+                Serial.println(target_Y);
+                Serial.print("------------------------------\n");
     
             }
             // reset for next time targeted search mode is reached
@@ -363,10 +404,18 @@ void loop() {
     readSensors();
 }
 
-float bestFitSlope(SensorReading *sensor_readings_set, int sensor_used) {
-    float sum_x = 450.0, sum_y = 0.0, sum_x2 = 28500.0, sum_y2 = 0.0, sum_xy = 0.0, slope = 0.0; 
+float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sensor_used) {
+    float sum_x = 0.0, sum_y = 0.0, sum_x2 = 0.0, sum_y2 = 0.0, sum_xy = 0.0, slope = 0.0; 
+    if (num_readings == 10) {
+        sum_x = 450.0;
+        sum_x2 = 28500.0;
+    }
+    if (num_readings == 30) {
+        sum_x = 4350.0;
+        sum_x2 = 85550000.0;
+    }
     float y = 0.0;
-    for (int i = 0; i < SAMPLING_FREQ_HZ; i++) {
+    for (int i = 0; i < num_readings; i++) {
         //sum_x += (SAMPLING_PERIOD_MS * i);
         //sum_x2 += (SAMPLING_PERIOD_MS * SAMPLING_PERIOD_MS * i * i);
         // if (sensor_used == 0) {
@@ -395,7 +444,7 @@ float bestFitSlope(SensorReading *sensor_readings_set, int sensor_used) {
     Serial.println(sum_y2);
     Serial.println(sum_xy);
 
-    slope = (SAMPLING_FREQ_HZ * sum_xy - sum_x * sum_y) / (SAMPLING_FREQ_HZ * sum_x2 - sum_x * sum_x);
+    slope = (num_readings * sum_xy - sum_x * sum_y) / (num_readings * sum_x2 - sum_x * sum_x);
     return slope;
 }
 
@@ -442,12 +491,13 @@ void readSensors() {
         //     scent_detected = true;
         // }
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
-            float slope = bestFitSlope(sensor_readings_per_second, 2);
+            float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 2);
             Serial.print("slope over a second: ");
             Serial.println(slope);
             if (slope > 0.02) {
                 Serial.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
                 scent_detected = true;
+                translation_complete = 1;
             }
         }
 
@@ -543,6 +593,31 @@ void checkEncoders() {
     // Serial.print("theta: ");
     // Serial.println(rad2deg(state[2]));
 
+    long duration;
+    float distance;
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+    duration = pulseIn(echoPin, HIGH);
+    distance = (duration / 2.0) / 29.1;
+
+    Serial.print("distance: ");
+    Serial.println(distance);
+
+    if (distance < DISTANCE_THRESHOLD) {
+        Serial.println("STOP FROM ULTRASONIC");
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+        delay(5000);
+        rotation_complete = 0;
+        translation_complete = 0;
+        target_angle = fmod(state[2] - PI, 2*PI);
+        target_X = state[0] + TRANSLATION * cos(target_angle);
+        target_Y = state[1] + TRANSLATION * sin(target_angle);
+    }
+
     if (rotation_complete == 0) {
         // rotate till theta reached
         rotation(state[2], target_angle);
@@ -590,8 +665,8 @@ void reset() {
 
 // translate from current coordinate to target coordinate
 void translation(float current_x, float current_y, float target_x, float target_y) {
-    wheelSpeedLeft = 130;
-    wheelSpeedRight = 110;
+    wheelSpeedLeft = 170;
+    wheelSpeedRight = 150;
 
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
     Serial.println("distance from target: ");
@@ -628,20 +703,22 @@ void translation(float current_x, float current_y, float target_x, float target_
 
 // rotate from current orientation to target orientation
 void rotation(float current_theta, float target_theta) {
-    wheelSpeedLeft = 130;
-    wheelSpeedRight = 110;
+    wheelSpeedLeft = 170;
+    wheelSpeedRight = 150;
 
     Serial.print("rotation - current_theta: ");
     Serial.println(rad2deg(current_theta));
     Serial.print("rotation - target_theta: ");
     Serial.println(rad2deg(target_theta));
 
-    if (rad2deg(target_theta) - rad2deg(current_theta) > 3) {
+    float diff = rad2deg(target_theta) - rad2deg(current_theta);
+
+    if (diff > 3) {
         // Clockwise
         setMotor(BACKWARD, wheelSpeedLeft, enA, IN1, IN2);
         setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
     }
-    else if (rad2deg(target_theta) - rad2deg(current_theta) < -3) {
+    else if ((diff < -3)) {
         // Counterclockwise
         setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
         setMotor(BACKWARD, wheelSpeedRight, enB, IN3, IN4);
@@ -680,7 +757,11 @@ float getTheta(float x1, float y1, float x2, float y2) {
     if (theta < 0) {
         theta = theta + 2 * PI;
     }
-    return fmod(theta, 2 * PI);
+    theta = fmod(theta, 2 * PI);
+    if (theta > PI) {
+        theta = theta - 2 * PI;
+    }
+    return theta;
 }
 
 // get the l2 distance between 2 points
