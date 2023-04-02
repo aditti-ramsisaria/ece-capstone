@@ -108,7 +108,8 @@ int translation_complete = 1;
 // FOR SCANNING
 
 const float DETECTION_THRESHOLD = 3.3;
-const float CONFIRMATION_THRESHOLD = 4;
+const float CONFIRMATION_THRESHOLD_GROVE_VOC = 4;
+const float SLOPE_THRESHOLD = 0.02;
 const float TRANSLATION = 0.15; // Translation (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
@@ -383,7 +384,7 @@ void readSensors() {
         Serial.print("\nGrove VOC:");
         Serial.println(sensor_reading.gm_voc_v);
 
-        if (sensor_reading.gm_voc_v > CONFIRMATION_THRESHOLD) {
+        if (sensor_reading.gm_voc_v > CONFIRMATION_THRESHOLD_GROVE_VOC) {
             scent_confirmed = true;
             scent_detected = false;
         } 
@@ -392,7 +393,7 @@ void readSensors() {
             float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 2);
             Serial.print("slope over a second: ");
             Serial.println(slope);
-            if (slope > 0.02) {
+            if (slope > SLOPE_THRESHOLD) {
                 Serial.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
                 scent_detected = true;
                 translation_complete = 1;

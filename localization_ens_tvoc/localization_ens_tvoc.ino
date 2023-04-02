@@ -1,8 +1,8 @@
 #include <math.h>
 #include <SoftwareSerial.h>                      
 #include <Wire.h>
+#include "ScioSense_ENS160.h"  // ENS160 library
 #include <SPI.h>
-#include "Multichannel_Gas_GMXXX.h"
 
 // FOR SENSORS
 
@@ -21,13 +21,15 @@ const int DISTANCE_THRESHOLD = 5; // cm
 unsigned long prevSensorMillis;
 
 // Global objects
-GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
+
+// ScioSense_ENS160      ens160(ENS160_I2CADDR_0);
+ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
                
 struct SensorReading
 {
-    float gm_eth_v = 0.0;
-    float gm_voc_v = 0.0;
     unsigned long timestamp = 0;
+    float ens_TVOC = 0.0;
+    float ens_CO2 = 0.0;
 };
 
 SensorReading sensor_reading;
@@ -108,7 +110,7 @@ int translation_complete = 1;
 // FOR SCANNING
 
 const float DETECTION_THRESHOLD = 3.3;
-const float CONFIRMATION_THRESHOLD_GROVE_ETH = 4;
+const float CONFIRMATION_THRESHOLD_ENS_TVOC = 4;
 const float SLOPE_THRESHOLD = 0.02;
 const float TRANSLATION = 0.15; // Translation (m)
 
@@ -138,13 +140,16 @@ void sensorSetup() {
     pinMode(trigPin, OUTPUT);
     pinMode(echoPin, INPUT);
 
-    // grove initialization
-    gas.begin(Wire, 0x08);
+    // ens160 initialization
+    ens160.begin();
+    if (ens160.available()) {
+        ens160.setMode(ENS160_OPMODE_STD);
+    }
   
     if (label) {
-        Serial.print("grove_voc1");
+        Serial.print("ens_tvoc");
         Serial.print(",");
-        Serial.print("grove_eth");
+        Serial.print("ens_co2");
         Serial.print(",");
         Serial.println("label");
         label=false;
@@ -242,12 +247,12 @@ void loop() {
             if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
                 // completed samples for this scan, set to next scan
 
-                Serial.print("------------------------finished scan--------------------------- ");
+                Serial.print("------------------------finished scan: ");
                 Serial.println(curr_scan);
-                Serial.print("avg VOC: ");
-                Serial.println(scan_readings[curr_scan].gm_voc_v);
-                Serial.print("avg eth: ");
-                Serial.println(scan_readings[curr_scan].gm_eth_v);
+                Serial.print("avg CO2: ");
+                Serial.println(scan_readings[curr_scan].ens_CO2);
+                Serial.print("avg TVOC: ");
+                Serial.println(scan_readings[curr_scan].ens_TVOC);
 
                 num_samples = 0;
                 curr_scan++;
@@ -260,15 +265,15 @@ void loop() {
         else { // MOVING TOWARDS SCENT
             scan_mode = false;
             
-            // Find direction of highest ethanol concentration
+            // Find direction of highest concentration
             int max_i = 0;
             float max_val = 0.0;
             float val = 0.0;
             int low_detection_count = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
                 float slope;
-                val = scan_readings[i].gm_eth_v;
-                float prev_val = scan_readings[i - 1].gm_eth_v;
+                val = scan_readings[i].ens_TVOC;
+                float prev_val = scan_readings[i - 1].ens_TVOC;
                 if (i > 0) {
                     slope = (val - prev_val) / (SCAN_TIME);
                     Serial.print("****SLOPE***** at ");
@@ -344,7 +349,7 @@ float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sen
             // ens CO2
             y = sensor_readings_set[i].ens_CO2;
         }
-        else if (sensor_used == 2) {
+        if (sensor_used == 2) {
             // grove voc
             y = (100.0 * sensor_readings_set[i].gm_voc_v);
         }
@@ -373,25 +378,27 @@ void readSensors() {
 
     if (sensor_reading.timestamp > prevSensorMillis + SAMPLING_PERIOD_MS) {
         
-         // Read from GM-X02b sensors (multichannel gas)
-        sensor_readings_per_second[sample_count].gm_eth_v = gas.calcVol(gas.getGM302B());
-        sensor_readings_per_second[sample_count].gm_voc_v = gas.calcVol(gas.getGM502B());
-        sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
-        sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
+        // Read from ENS-160
+        if (ens160.available()) {
+            ens160.measure(0);
+            sensor_readings_per_second[sample_count].ens_TVOC = ens160.getTVOC();
+            sensor_readings_per_second[sample_count].ens_CO2 = ens160.geteCO2();
+            sensor_reading.ens_TVOC = ens160.getTVOC();
+            sensor_reading.ens_CO2 = ens160.geteCO2();
+        }
 
-        Serial.print("\nGrove Ethanol:");
-        Serial.println(sensor_reading.gm_eth_v);
-        Serial.print("\nGrove VOC:");
-        Serial.println(sensor_reading.gm_voc_v);
+        Serial.print("\nTVOC: ");
+        Serial.println(sensor_reading.ens_TVOC);
+        Serial.print("\nCO2:");
+        Serial.println(sensor_reading.ens_CO2);
 
-        if (sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) {
+        if (sensor_reading.ens_TVOC > CONFIRMATION_THRESHOLD_ENS_TVOC) {
             scent_confirmed = true;
             scent_detected = false;
         } 
-       
+        
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
-            // find best fit slope of ethanol readings over a period of a second
-            float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
+            float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 0);
             Serial.print("slope over a second: ");
             Serial.println(slope);
             if (slope > SLOPE_THRESHOLD) {
@@ -404,8 +411,8 @@ void readSensors() {
         // Save values
         
         if (scan_mode && (rotation_complete == 1) && (num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ))) {
-            scan_readings[curr_scan].gm_eth_v += (sensor_reading.gm_eth_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
-            scan_readings[curr_scan].gm_voc_v += (sensor_reading.gm_voc_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            scan_readings[curr_scan].ens_TVOC += (sensor_reading.ens_TVOC / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            scan_readings[curr_scan].ens_CO2 += (sensor_reading.ens_CO2 / (SCAN_TIME * SAMPLING_FREQ_HZ));
             num_samples++;
         }
         sample_count = (sample_count + 1) % SAMPLING_FREQ_HZ;
@@ -470,6 +477,15 @@ void checkEncoders() {
     state[0] = last_state[0] + ((t / 6) * (k00 + 4 * k10 + k30)); // x
     state[1] = last_state[1] + ((t / 6) * (k01 + 4 * k11 + k31)); // y
     state[2] = fmod(last_state[2] + (t * w_robot), 2 * PI);
+
+    // Serial.print("w_robot: ");
+    // Serial.println(w_robot); 
+    // Serial.print("x: ");
+    // Serial.println(state[0]);
+    // Serial.print("y: ");
+    // Serial.println(state[1]);
+    // Serial.print("theta: ");
+    // Serial.println(rad2deg(state[2]));
 
     long duration;
     float distance;
