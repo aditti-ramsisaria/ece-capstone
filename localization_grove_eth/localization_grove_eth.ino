@@ -133,22 +133,12 @@ int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ)
 // sensor setup
 void sensorSetup() {
     unsigned status;
-    bool label = true;
 
     pinMode(trigPin, OUTPUT);
     pinMode(echoPin, INPUT);
 
     // grove initialization
     gas.begin(Wire, 0x08);
-  
-    if (label) {
-        Serial.print("grove_voc1");
-        Serial.print(",");
-        Serial.print("grove_eth");
-        Serial.print(",");
-        Serial.println("label");
-        label=false;
-    }
 }
 
 // motor setup 
@@ -208,12 +198,6 @@ void loop() {
         Compute next random x, y to translate to */
 
         computeRandomConfig(state[2], state[0], state[1]);
-        Serial.print("new x: ");
-        Serial.println(target_X);
-        Serial.print("new y: ");
-        Serial.println(target_Y);
-        Serial.print("new angle: ");
-        Serial.println(rad2deg(target_angle));
         rotation_complete = 0;
         translation_complete = 0;
     } 
@@ -223,10 +207,6 @@ void loop() {
         Serial.println("\n\n\n-------***-------TARGETED SEARCH MODE-------***-------\n\n\n");        
         if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
             scan_mode = true;
-            Serial.print("------------------------------\n");
-            Serial.print("Scan: ");
-            Serial.println(curr_scan);
-            Serial.print("------------------------------\n");
             // If sufficient samples have been taken, rotate to next position
             
             if (curr_scan == -1) {
@@ -336,15 +316,7 @@ float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sen
     }
     float y = 0.0;
     for (int i = 0; i < num_readings; i++) {
-        if (sensor_used == 0) {
-            // ens TVOC
-            y = sensor_readings_set[i].ens_TVOC;
-        }
-        else if (sensor_used == 1) {
-            // ens CO2
-            y = sensor_readings_set[i].ens_CO2;
-        }
-        else if (sensor_used == 2) {
+        if (sensor_used == 2) {
             // grove voc
             y = (100.0 * sensor_readings_set[i].gm_voc_v);
         }
@@ -356,12 +328,7 @@ float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sen
         sum_y2 += (y * y);
         sum_xy += (SAMPLING_PERIOD_MS * i * y / 10.0);
     }
-    Serial.println(sum_x);
-    Serial.println(sum_x2);
-    Serial.println(sum_y);
-    Serial.println(sum_y2);
-    Serial.println(sum_xy);
-
+   
     slope = (num_readings * sum_xy - sum_x * sum_y) / (num_readings * sum_x2 - sum_x * sum_x);
     return slope;
 }
