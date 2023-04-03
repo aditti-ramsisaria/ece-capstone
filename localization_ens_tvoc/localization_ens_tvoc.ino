@@ -127,11 +127,6 @@ bool scan_mode = false;
 int curr_scan = -1; // [0, NUM_SCANS)
 int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ)
 
-// generate a random x, y coordinate
-// compute theta between current x, y and generated
-// rotate to new orientation
-// translate to new coordinate
-
 // sensor setup
 void sensorSetup() {
     unsigned status;

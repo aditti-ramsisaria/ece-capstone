@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <SPI.h>
 #include "Multichannel_Gas_GMXXX.h"
+#include <LiquidCrystal_I2C.h>
 
 // FOR SENSORS
 
@@ -22,6 +23,7 @@ unsigned long prevSensorMillis;
 
 // Global objects
 GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
+LiquidCrystal_I2C lcd(0x3F, 16, 2); 
                
 struct SensorReading
 {
@@ -53,7 +55,6 @@ int sample_count = 0; // goes from 0 to SAMPLING_FREQ_HZ - 1
 #define FORWARD 1
 #define STOP 0
 #define BACKWARD -1
-
 
 // Constants
 const int COUNTS_PER_ROTATION = 14;
@@ -92,8 +93,8 @@ float distFromTarget = 0;
 float prevDistFromTarget = 100;
 
 // Parameters
-int wheelSpeedLeft = 170;
-int wheelSpeedRight = 150;
+int wheelSpeedLeft = 190;
+int wheelSpeedRight = 170;
 const float SCALE = 1.7;
 
 float target_X = 0.0;
@@ -107,8 +108,7 @@ int translation_complete = 1;
 
 // FOR SCANNING
 
-const float DETECTION_THRESHOLD = 3.3;
-const float CONFIRMATION_THRESHOLD_GROVE_ETH = 4;
+const float CONFIRMATION_THRESHOLD_GROVE_ETH = 2.0;
 const float SLOPE_THRESHOLD = 0.02;
 const float TRANSLATION = 0.15; // Translation (m)
 
@@ -124,11 +124,6 @@ bool scan_mode = false;
 
 int curr_scan = -1; // [0, NUM_SCANS)
 int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ)
-
-// generate a random x, y coordinate
-// compute theta between current x, y and generated
-// rotate to new orientation
-// translate to new coordinate
 
 // sensor setup
 void sensorSetup() {
@@ -165,6 +160,9 @@ void motorSetup() {
 
 // main setup
 void setup() {
+    lcd.begin(); //Defining 16 columns and 2 rows of lcd display
+    lcd.clear();
+    lcd.backlight(); //To Power ON the back light
     reset();
     Serial.begin(115200);
     sensorSetup();
@@ -186,7 +184,9 @@ void computeRandomConfig(float current_theta, float current_x, float current_y) 
 void loop() {
     if (scent_confirmed) {
         /* scent confirmed after detetction and scanning, stop motors */
-        Serial.println("SCENT CONFIRMED");
+        lcd.clear(); //Clean the screen
+        lcd.setCursor(0,0); 
+        lcd.print("SCENT  CONFIRMED");
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
         delay(10000);
@@ -196,7 +196,7 @@ void loop() {
         Serial.print("---------------------- RANDOM EXPLORATION MODE ----------------------");
         /* RANDOM SEARCH MODE 
         Compute next random x, y to translate to */
-
+        
         computeRandomConfig(state[2], state[0], state[1]);
         rotation_complete = 0;
         translation_complete = 0;
@@ -219,16 +219,12 @@ void loop() {
                 translation_complete = 1;
             }
 
+            lcd.setCursor(0, 0); 
+            lcd.print("ALCOHOL SCAN: ");
+            lcd.print(curr_scan);
+
             if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
                 // completed samples for this scan, set to next scan
-
-                Serial.print("------------------------finished scan--------------------------- ");
-                Serial.println(curr_scan);
-                Serial.print("avg VOC: ");
-                Serial.println(scan_readings[curr_scan].gm_voc_v);
-                Serial.print("avg eth: ");
-                Serial.println(scan_readings[curr_scan].gm_eth_v);
-
                 num_samples = 0;
                 curr_scan++;
                 target_angle = fmod(state[2] + ((scan_angle) * PI / 180.0), 2*PI);
@@ -239,7 +235,8 @@ void loop() {
         } 
         else { // MOVING TOWARDS SCENT
             scan_mode = false;
-            
+            lcd.clear();
+            lcd.setCursor(0, 0);
             // Find direction of highest ethanol concentration
             int max_i = 0;
             float max_val = 0.0;
@@ -251,14 +248,10 @@ void loop() {
                 float prev_val = scan_readings[i - 1].gm_eth_v;
                 if (i > 0) {
                     slope = (val - prev_val) / (SCAN_TIME);
-                    Serial.print("****SLOPE***** at ");
-                    Serial.print(i);
-                    Serial.println(slope);
                     if (slope <= 0.0) {
                         low_detection_count++;
                     }
                 }
-                Serial.println(val);
                 if (val > max_val) {
                     max_i = i;
                     max_val = val;
@@ -271,24 +264,13 @@ void loop() {
             } 
             else {
                 // Set new coordinates in direction of highest concentration
+                lcd.print("MAX VALUE AT: ");
+                lcd.print(max_i);
                 target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
                 target_X = state[0] + TRANSLATION * cos(target_angle);
                 target_Y = state[1] + TRANSLATION * sin(target_angle);
-    
-                Serial.print("_____!!!!!-------------TRANSLATION MODE-----------------!!!!\n");
-                Serial.print("max i value (best scan): ");
-                Serial.println(max_i);
-                Serial.print("curr angle: ");
-                Serial.println(rad2deg(state[2]));
-                Serial.print("target angle: ");
-                Serial.println(rad2deg(target_angle));
-                Serial.print("target_X: ");
-                Serial.println(target_X);
-                Serial.print("target_Y: ");
-                Serial.println(target_Y);
-                Serial.print("------------------------------\n");
-    
             }
+            
             // reset for next time targeted search mode is reached
             for (int i = 0; i < NUM_SCANS; i++) {
                 scan_readings[i] = EMPTY_SCAN_READINGS[i];
@@ -322,7 +304,7 @@ float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sen
         }
         else if (sensor_used == 3) {
             // grove ethanol
-            y = sensor_readings_set[i].gm_eth_v;
+            y = (100.0 * sensor_readings_set[i].gm_eth_v);
         }
         sum_y += y;
         sum_y2 += (y * y);
@@ -346,10 +328,12 @@ void readSensors() {
         sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
         sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
 
-        Serial.print("\nGrove Ethanol:");
-        Serial.println(sensor_reading.gm_eth_v);
-        Serial.print("\nGrove VOC:");
-        Serial.println(sensor_reading.gm_voc_v);
+        lcd.setCursor(0, 1);
+        lcd.print("E: ");
+        lcd.print(sensor_reading.gm_eth_v);
+        lcd.setCursor(8, 1);
+        lcd.print("V: ");
+        lcd.print(sensor_reading.gm_voc_v);
 
         if (sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) {
             scent_confirmed = true;
@@ -359,12 +343,11 @@ void readSensors() {
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
             // find best fit slope of ethanol readings over a period of a second
             float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
-            Serial.print("slope over a second: ");
             Serial.println(slope);
-            if (slope > SLOPE_THRESHOLD) {
-                Serial.println("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            if (slope > SLOPE_THRESHOLD && scent_detected == false) {
                 scent_detected = true;
                 translation_complete = 1;
+                
             }
         }
 
@@ -453,9 +436,16 @@ void checkEncoders() {
 
     if (distance < DISTANCE_THRESHOLD) {
         Serial.println("STOP FROM ULTRASONIC");
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("WALL   DETECTED");
+        lcd.setCursor(0, 1);
+        lcd.print("BACKING UP...");
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
-        delay(5000);
+        delay(1000);
+        lcd.clear();//Clean the screen
+        lcd.setCursor(0, 0); 
         rotation_complete = 0;
         translation_complete = 0;
         target_angle = fmod(state[2] - PI, 2*PI);
@@ -506,22 +496,19 @@ void reset() {
     }
     curr_scan = -1;
     num_samples = 0;
+    lcd.clear();
 }
 
 // translate from current coordinate to target coordinate
 void translation(float current_x, float current_y, float target_x, float target_y) {
-    wheelSpeedLeft = 170;
-    wheelSpeedRight = 150;
+    
 
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
-    Serial.println("distance from target: ");
-    Serial.println(distFromTarget);
-
+    
     if (distFromTarget <= prevDistFromTarget) {
        // Approaching target, continue
        prevDistFromTarget = distFromTarget;
        if (getDistance(current_x, current_y, target_x, target_y) > 0.02) {
-            Serial.println("forward");
             setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
             setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
         }
@@ -541,21 +528,11 @@ void translation(float current_x, float current_y, float target_x, float target_
         prevDistFromTarget = 100;
         rotation_complete = 0; // Reset the turn - rotate and translate again to meet the target
         target_angle = getTheta(current_x, current_y, target_X, target_Y);
-        Serial.print("new theta: ");
-        Serial.println(target_angle);
     }
 }    
 
 // rotate from current orientation to target orientation
 void rotation(float current_theta, float target_theta) {
-    wheelSpeedLeft = 170;
-    wheelSpeedRight = 150;
-
-    Serial.print("rotation - current_theta: ");
-    Serial.println(rad2deg(current_theta));
-    Serial.print("rotation - target_theta: ");
-    Serial.println(rad2deg(target_theta));
-
     float diff = rad2deg(target_theta) - rad2deg(current_theta);
 
     if (diff > 3) {
