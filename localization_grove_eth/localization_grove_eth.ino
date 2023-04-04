@@ -63,6 +63,10 @@ const float WHEEL_DIAMETER = 0.068;
 const float WHEEL_CIRCUMFERENCE = 0.2136;
 const float WHEEL_BASE = 0.142;
 
+// MAP SIZE
+const float MAP_X = 1.5;
+const float MAP_Y = 1.5;
+
 const unsigned long PERIOD = 50;
 
 // Global variables
@@ -93,15 +97,21 @@ float distFromTarget = 0;
 float prevDistFromTarget = 100;
 
 // Parameters
-int wheelSpeedLeft = 190;
-int wheelSpeedRight = 170;
-const float SCALE = 1.7;
+int wheelSpeedLeft = 150;
+int wheelSpeedRight = 130;
+const float SCALE = 2.2;
 
 float target_X = 0.0;
 float target_Y = 0.0; 
 float target_angle = 0.0;
 int rotation_complete = 1;
 int translation_complete = 1;
+
+// const int NUM_POINTS = 7;
+// const float ARRAY_X[NUM_POINTS] = {0.0, 0.3, 0.3, 0.3, 0.9, 0.9, 0.9};
+// const float ARRAY_Y[NUM_POINTS] = {0.0, 0.5, 1.0, 1.5, 1.5, 1.0, 0.5};
+
+// int CURRENT_POINT = 0;
 
 // right - M2 - B
 // left - M1 - A
@@ -110,7 +120,7 @@ int translation_complete = 1;
 
 const float CONFIRMATION_THRESHOLD_GROVE_ETH = 2.0;
 const float SLOPE_THRESHOLD = 0.02;
-const float TRANSLATION = 0.15; // Translation (m)
+const float TRANSLATION = 0.20; // Translation (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 3; // Time stopped to sample (s)
@@ -176,8 +186,8 @@ void computeRandomConfig(float current_theta, float current_x, float current_y) 
     float new_distance = random(15.0, 20.0) / 100.0;
     float new_x = current_x + new_distance * cos(target_angle);
     float new_y = current_y + new_distance * sin(target_angle);
-    target_X = constrain(new_x, 0.0, 0.75);
-    target_Y = constrain(new_y, 0.0, 0.75);
+    target_X = constrain(new_x, 0.0, MAP_X);
+    target_Y = constrain(new_y, 0.0, MAP_Y);
 }
 
 // main loop
@@ -197,7 +207,14 @@ void loop() {
         /* RANDOM SEARCH MODE 
         Compute next random x, y to translate to */
         
+        // computeRandomConfig(state[2], state[0], state[1]);
         computeRandomConfig(state[2], state[0], state[1]);
+               
+//        target_X = ARRAY_X[CURRENT_POINT];
+//        target_Y = ARRAY_Y[CURRENT_POINT];
+//        target_angle = getTheta(state[0], state[1], target_X, target_Y);
+//        CURRENT_POINT++;
+        
         rotation_complete = 0;
         translation_complete = 0;
     } 
@@ -335,7 +352,7 @@ void readSensors() {
         lcd.print("V: ");
         lcd.print(sensor_reading.gm_voc_v);
 
-        if (sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) {
+        if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) && (scent_detected == true)) {
             scent_confirmed = true;
             scent_detected = false;
         } 
@@ -421,6 +438,12 @@ void checkEncoders() {
     state[1] = last_state[1] + ((t / 6) * (k01 + 4 * k11 + k31)); // y
     state[2] = fmod(last_state[2] + (t * w_robot), 2 * PI);
 
+//    lcd.setCursor(0, 0);
+//    lcd.print("X: ");
+//    lcd.print(state[0]);
+//    lcd.print(" Y: ");
+//    lcd.print(state[1]);
+
     long duration;
     float distance;
     digitalWrite(trigPin, LOW);
@@ -443,7 +466,7 @@ void checkEncoders() {
         lcd.print("BACKING UP...");
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
-        delay(1000);
+        delay(500);
         lcd.clear();//Clean the screen
         lcd.setCursor(0, 0); 
         rotation_complete = 0;
@@ -501,14 +524,15 @@ void reset() {
 
 // translate from current coordinate to target coordinate
 void translation(float current_x, float current_y, float target_x, float target_y) {
+    wheelSpeedLeft = 150;
+    wheelSpeedRight = 140;
     
-
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
     
     if (distFromTarget <= prevDistFromTarget) {
        // Approaching target, continue
        prevDistFromTarget = distFromTarget;
-       if (getDistance(current_x, current_y, target_x, target_y) > 0.02) {
+       if (getDistance(current_x, current_y, target_x, target_y) > 0.03) {
             setMotor(FORWARD, wheelSpeedLeft, enA, IN1, IN2);
             setMotor(FORWARD, wheelSpeedRight, enB, IN3, IN4);
         }
@@ -522,7 +546,7 @@ void translation(float current_x, float current_y, float target_x, float target_
       // Target missed, stop
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
-        Serial.println("HARD STOP: > 2cm away from the target");
+        Serial.println("HARD STOP: > 5cm away from the target");
 
         // Corrective action
         prevDistFromTarget = 100;
@@ -533,6 +557,8 @@ void translation(float current_x, float current_y, float target_x, float target_
 
 // rotate from current orientation to target orientation
 void rotation(float current_theta, float target_theta) {
+    wheelSpeedLeft = 155;
+    wheelSpeedRight = 155;
     float diff = rad2deg(target_theta) - rad2deg(current_theta);
 
     if (diff > 3) {
