@@ -98,8 +98,8 @@ float prevDistFromTarget = 100;
 
 // Parameters
 int wheelSpeedLeft = 150;
-int wheelSpeedRight = 130;
-const float SCALE = 2.2;
+int wheelSpeedRight = 140;
+const float SCALE = 1.7;
 
 float target_X = 0.0;
 float target_Y = 0.0; 
@@ -120,7 +120,7 @@ int translation_complete = 1;
 
 const float CONFIRMATION_THRESHOLD_GROVE_ETH = 2.0;
 const float SLOPE_THRESHOLD = 0.02;
-const float TRANSLATION = 0.20; // Translation (m)
+const float TRANSLATION = 0.15; // Translation (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 3; // Time stopped to sample (s)
@@ -133,7 +133,7 @@ SensorReading scan_readings[NUM_SCANS];
 bool scan_mode = false;
 
 int curr_scan = -1; // [0, NUM_SCANS)
-int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ)
+int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ) 
 
 // sensor setup
 void sensorSetup() {
@@ -183,7 +183,7 @@ void computeRandomConfig(float current_theta, float current_x, float current_y) 
     // compute a new orientation to turn to in random exploration within 180 deg of current
     // computes target cooridnates using new theta
     target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
-    float new_distance = random(15.0, 20.0) / 100.0;
+    float new_distance = random(15.0, 40.0) / 100.0;
     float new_x = current_x + new_distance * cos(target_angle);
     float new_y = current_y + new_distance * sin(target_angle);
     target_X = constrain(new_x, 0.0, MAP_X);
@@ -472,8 +472,13 @@ void checkEncoders() {
         rotation_complete = 0;
         translation_complete = 0;
         target_angle = fmod(state[2] - PI, 2*PI);
+        Serial.println("TARGET ANGLE");
+        Serial.println(rad2deg(state[2]));
+        Serial.println(rad2deg(target_angle));
         target_X = state[0] + TRANSLATION * cos(target_angle);
+        Serial.println(target_X);
         target_Y = state[1] + TRANSLATION * sin(target_angle);
+        Serial.println(target_Y);
     }
 
     if (rotation_complete == 0) {
