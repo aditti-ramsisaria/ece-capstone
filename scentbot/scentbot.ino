@@ -4,6 +4,9 @@
 #include <SPI.h>
 #include "Multichannel_Gas_GMXXX.h"
 #include <LiquidCrystal_I2C.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include "ScioSense_ENS160.h"
 
 // FOR SENSORS
 
@@ -23,13 +26,27 @@ unsigned long prevSensorMillis;
 
 // Global objects
 GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
+
+// Initialize BME
+Adafruit_BME280 bme; 
+
+ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
+
 LiquidCrystal_I2C lcd(0x3F, 16, 2); 
                
 struct SensorReading
 {
+    float gm_no2_v = 0.0;
     float gm_eth_v = 0.0;
     float gm_voc_v = 0.0;
+    float gm_co_v = 0.0;
     unsigned long timestamp = 0;
+    float ens_TVOC = 0.0;
+    float ens_CO2 = 0.0;
+    float bme_temp = 0.0;
+    float bme_pressure = 0.0;
+    float bme_altitude = 0.0;
+    float bme_humidity = 0.0;
 };
 
 SensorReading sensor_reading;
@@ -143,6 +160,24 @@ void sensorSetup() {
 
     // grove initialization
     gas.begin(Wire, 0x08);
+
+    // ens160 initialization
+    ens160.begin();
+    if (ens160.available()) {
+        ens160.setMode(ENS160_OPMODE_STD);
+    }
+
+    status = bme.begin();  
+    if (!status) {
+        Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
+        Serial.print("SensorID was: 0x"); 
+        Serial.println(bme.sensorID(),16);
+        Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
+        Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
+        Serial.print("        ID of 0x60 represents a BME 280.\n");
+        Serial.print("        ID of 0x61 represents a BME 680.\n");
+    }
+
 }
 
 // motor setup 
@@ -340,15 +375,62 @@ void readSensors() {
          // Read from GM-X02b sensors (multichannel gas)
         sensor_readings_per_second[sample_count].gm_eth_v = gas.calcVol(gas.getGM302B());
         sensor_readings_per_second[sample_count].gm_voc_v = gas.calcVol(gas.getGM502B());
+        sensor_readings_per_second[sample_count].gm_no2_v = gas.calcVol(gas.getGM102B());
+        sensor_readings_per_second[sample_count].gm_co_v = gas.calcVol(gas.getGM702B());
+
         sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
         sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
+        sensor_reading.gm_no2_v = gas.calcVol(gas.getGM102B());
+        sensor_reading.gm_co_v = gas.calcVol(gas.getGM702B());
 
+        // Read from ENS-160
+        if (ens160.available()) {
+            ens160.measure(0);
+            sensor_readings_per_second[sample_count].ens_TVOC = ens160.getTVOC();
+            sensor_readings_per_second[sample_count].ens_CO2 = ens160.geteCO2();
+            sensor_reading.ens_TVOC = ens160.getTVOC();
+            sensor_reading.ens_CO2 = ens160.geteCO2();
+        }
+
+        // Read from BME-280
+        sensor_readings_per_second[sample_count].bme_temp = bme.readTemperature();
+        sensor_readings_per_second[sample_count].bme_pressure = bme.readPressure();
+        sensor_readings_per_second[sample_count].bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
+        sensor_readings_per_second[sample_count].bme_humidity = bme.readHumidity();
+
+        sensor_reading.bme_temp = bme.readTemperature();
+        sensor_reading.bme_pressure = bme.readPressure();
+        sensor_reading.bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
+        sensor_reading.bme_humidity = bme.readHumidity();
+
+        
         lcd.setCursor(0, 1);
-        lcd.print("E: ");
-        lcd.print(sensor_reading.gm_eth_v);
-        lcd.setCursor(8, 1);
-        lcd.print("V: ");
-        lcd.print(sensor_reading.gm_voc_v);
+        lcd.print("C2:");
+        lcd.print(sensor_reading.ens_CO2);
+        lcd.setCursor(9, 1);
+        lcd.print("C:");
+        lcd.print(sensor_reading.gm_co_v);
+
+        Serial.print(sensor_reading.gm_voc_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_no2_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_eth_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.gm_co_v);
+        Serial.print(",");
+        Serial.print(sensor_reading.ens_TVOC);
+        Serial.print(",");
+        Serial.print(sensor_reading.ens_CO2);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_temp);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_pressure);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_altitude);
+        Serial.print(",");
+        Serial.print(sensor_reading.bme_humidity);
+        Serial.print(",");
 
         if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) && (scent_detected == true)) {
             scent_confirmed = true;
