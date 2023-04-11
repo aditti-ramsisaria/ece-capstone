@@ -8,7 +8,7 @@ namespace Eloquent {
                     /**
                     * Predict class for features vector
                     */
-                    int predict(float *x) {
+                    int* predict(float *x) {
                         float kernels[162] = { 0 };
                         float decisions[6] = { 0 };
                         int votes[4] = { 0 };
@@ -369,14 +369,22 @@ namespace Eloquent {
                             }
                         }
 
-                        return idx;
+                        int* output = {};
+                        output[0] = idx;
+                        output[1] = votes[0];
+                        output[2] = votes[1];
+                        output[3] = votes[2];
+                        output[4] = votes[3];
+
+                        return output;
                     }
 
                     /**
                     * Predict readable class name
                     */
                     const char* predictLabel(float *x) {
-                        return idxToLabel(predict(x));
+                        int* predicted = predict(x);
+                        return idxToLabel(predicted[0]);
                     }
 
                     /**

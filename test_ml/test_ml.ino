@@ -254,13 +254,21 @@ void readSensors() {
             X[33] = getRms(bme_temp, SAMPLING_FREQ_HZ);
             X[34] = getMean(bme_temp, SAMPLING_FREQ_HZ);
 
-            char* pred = classifier.predictLabel(X);
+            int* predicted = classifier.predict(X);
+            int idx = predicted[0];
+            char* pred = classifier.idxToLabel(idx);
 
             lcd.clear();
             lcd.setCursor(4, 0);
             lcd.print(pred);
 
-            Serial.print("Classified Label: ");
+            Serial.println("votes");
+            Serial.println(predicted[1]);
+            Serial.println(predicted[2]);
+            Serial.println(predicted[3]);
+            Serial.println(predicted[4]);
+
+            Serial.println("Classified Label: ");
             Serial.println(pred);
         }
         sample_count = (sample_count + 1) % SAMPLING_FREQ_HZ;
