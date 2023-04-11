@@ -372,7 +372,7 @@ void readSensors() {
 
     if (sensor_reading.timestamp > prevSensorMillis + SAMPLING_PERIOD_MS) {
         
-         // Read from GM-X02b sensors (multichannel gas)
+        // Read from GM-X02b sensors (multichannel gas)
         sensor_readings_per_second[sample_count].gm_eth_v = gas.calcVol(gas.getGM302B());
         sensor_readings_per_second[sample_count].gm_voc_v = gas.calcVol(gas.getGM502B());
         sensor_readings_per_second[sample_count].gm_no2_v = gas.calcVol(gas.getGM102B());
