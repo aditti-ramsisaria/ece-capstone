@@ -7,6 +7,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include "ScioSense_ENS160.h"
+#include "MultiClassification_linear.h"
 
 // FOR SENSORS
 
@@ -25,11 +26,12 @@ const int DISTANCE_THRESHOLD = 5; // cm
 unsigned long prevSensorMillis;
 
 // Global objects
-GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
 
+// Initialize Grove
+GAS_GMXXX<TwoWire> gas;               // Multichannel gas sensor v2
 // Initialize BME
 Adafruit_BME280 bme; 
-
+// Initialize ENS
 ScioSense_ENS160      ens160(ENS160_I2CADDR_1);
 
 LiquidCrystal_I2C lcd(0x3F, 16, 2); 
@@ -52,6 +54,31 @@ struct SensorReading
 SensorReading sensor_reading;
 SensorReading sensor_readings_per_second[SAMPLING_FREQ_HZ];
 int sample_count = 0; // goes from 0 to SAMPLING_FREQ_HZ - 1
+
+// For Classifier
+
+Eloquent::ML::Port::SVM classifier;
+float X[35];
+float gm_voc[SAMPLING_FREQ_HZ];
+float gm_no2[SAMPLING_FREQ_HZ];
+float gm_eth[SAMPLING_FREQ_HZ];
+float gm_co[SAMPLING_FREQ_HZ];
+float ens_tvoc[SAMPLING_FREQ_HZ];
+float ens_co2[SAMPLING_FREQ_HZ];
+float bme_temp[SAMPLING_FREQ_HZ];
+float bme_humidity[SAMPLING_FREQ_HZ];
+float bme_pressure[SAMPLING_FREQ_HZ];
+float bme_altitude[SAMPLING_FREQ_HZ];
+
+// dataset dependent values
+const float voc_min = 0.92, voc_max = 4.84;
+const float eth_min = 0.89, eth_max = 4.78;
+const float no2_min = 0.77, no2_max = 4.67;
+const float co_min = 1.06, co_max = 4.94;
+const float tvoc_min = 1.0, tvoc_max = 25634.0;
+const float co2_min = 400.0, co2_max = 12119.0;
+const float temp_min = 21.79, temp_max = 27.37;
+
 
 // FOR MOTORS
 
@@ -124,11 +151,6 @@ float target_angle = 0.0;
 int rotation_complete = 1;
 int translation_complete = 1;
 
-// const int NUM_POINTS = 1;
-// const float ARRAY_X[NUM_POINTS] = {0.5};
-// const float ARRAY_Y[NUM_POINTS] = {0.0};
-// int CURRENT_POINT = 0;
-
 // right - M2 - B
 // left - M1 - A
 
@@ -150,6 +172,139 @@ bool scan_mode = false;
 
 int curr_scan = -1; // [0, NUM_SCANS)
 int num_samples = 0; // [0, SCAN_TIME * SAMPLING_FREQ_HZ) 
+
+/* MATH FUNCTIONS */
+
+// compute mean of array
+float getMean(float* val, int arrayCount) {
+  long total = 0;
+  for (int i = 0; i < arrayCount; i++) {
+    total = total + val[i];
+  }
+  float avg = total / (float)arrayCount;
+  return avg;
+}
+
+// compute standard deviation of array
+float getStdDev(float* val, int arrayCount) {
+    float avg = getMean(val, arrayCount);
+    long total = 0;
+    for (int i = 0; i < arrayCount; i++) {
+        total = total + (val[i] - avg) * (val[i] - avg);
+    }
+
+    float variance = total / (float)arrayCount;
+    float stdDev = sqrt(variance);
+    return stdDev;
+}
+
+// return min of array of floats
+float getMin(float* val, int arrayCount) {
+    float min = val[0];
+    for (int i = 0; i < arrayCount; i++) {
+        if (val[i] < min) {
+            min = val[i];
+        }
+    }
+    return min;
+}
+
+// return max of array of floats
+float getMax(float* val, int arrayCount) {
+    float max = val[0];
+    for (int i = 0; i < arrayCount; i++) {
+        if (val[i] > max) {
+            max = val[i];
+        }
+    }
+    return max;
+}
+
+// return rms of array of floats
+float getRms(float* val, int arrayCount) {
+    float total_square = 0.0;
+    for (int i = 0; i < arrayCount; i++) {
+        total_square = total_square + val[i] * val[i];
+    }
+    float rms = total_square / (float) arrayCount;
+    return sqrt(rms);
+}
+
+// compute slope of best fit line over array of sensor readings
+float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sensor_used) {
+    float sum_x = 0.0, sum_y = 0.0, sum_x2 = 0.0, sum_y2 = 0.0, sum_xy = 0.0, slope = 0.0; 
+    if (num_readings == 10) {
+        sum_x = 450.0;
+        sum_x2 = 28500.0;
+    }
+    if (num_readings == 30) {
+        sum_x = 4350.0;
+        sum_x2 = 85550000.0;
+    }
+    float y = 0.0;
+    for (int i = 0; i < num_readings; i++) {
+        if (sensor_used == 2) {
+            // grove voc
+            y = (100.0 * sensor_readings_set[i].gm_voc_v);
+        }
+        else if (sensor_used == 3) {
+            // grove ethanol
+            y = (100.0 * sensor_readings_set[i].gm_eth_v);
+        }
+        sum_y += y;
+        sum_y2 += (y * y);
+        sum_xy += (SAMPLING_PERIOD_MS * i * y / 10.0);
+    }
+   
+    slope = (num_readings * sum_xy - sum_x * sum_y) / (num_readings * sum_x2 - sum_x * sum_x);
+    return slope;
+}
+
+// get the l2 distance between 2 points
+float getDistance(float x1, float y1, float x2, float y2) {
+    return sqrtf(powf(x1 - x2, 2) + powf(y1 - y2, 2));
+}
+
+// convert from radians to degrees
+float rad2deg(float theta) {
+    return theta * (180.0) / PI;
+}
+
+// get target orientation to get from one coordiante to the other
+float getTheta(float x1, float y1, float x2, float y2) {
+    // put into local coordinate system
+    // returns radians
+    x2 = x2 - x1;
+    y2 = y2 - y1;
+    float theta = 0.0;
+    
+    if ((fabs(x2) < 1e-7) && (y2 < 0)) {
+        theta = 1.5 * PI;
+    }
+    else if ((x2 == 0) and (y2 > 0)) {
+        theta = 0.5 * PI;
+    }
+    else {
+        theta = atan2(y2, x2);
+    } 
+    if (theta < 0) {
+        theta = theta + 2 * PI;
+    }
+    theta = fmod(theta, 2 * PI);
+    if (theta > PI) {
+        theta = theta - 2 * PI;
+    }
+    return theta;
+}
+
+// normalize an array
+void normalize_array(float* val, float min_val, float max_val, int arrayCount) {
+    for (int i = 0; i < arrayCount; i++) {
+        val[i] = (val[i] - min_val) / (max_val - min_val);
+    }
+}
+
+/* SENSOR FUNCTIONS */
 
 // sensor setup
 void sensorSetup() {
@@ -180,189 +335,61 @@ void sensorSetup() {
 
 }
 
-// motor setup 
-void motorSetup() {
-    pinMode(IN1, OUTPUT);
-    pinMode(IN2, OUTPUT);
-    pinMode(IN3, OUTPUT);
-    pinMode(IN4, OUTPUT);
-    pinMode(enA, OUTPUT);
-    pinMode(enB, OUTPUT);
-    
-    pinMode(M1_ENCA, INPUT);
-    pinMode(M1_ENCB, INPUT);
-    attachInterrupt(digitalPinToInterrupt(M1_ENCA), readEncoderM1, RISING);
-    
-    pinMode(M2_ENCA,INPUT);
-    pinMode(M2_ENCB,INPUT);
-    attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
-  
-    Serial.println("Starting in 5s");
-    delay(5000);
-    randomSeed(analogRead(0));
-}
+// set up feature vector for classification
+void featureSetup() {
+    // calculate min, max, std, rms, avg for each
+    // do normalization first
+    normalize_array(gm_voc, voc_min, voc_max, SAMPLING_FREQ_HZ);
+    normalize_array(gm_eth, eth_min, eth_max, SAMPLING_FREQ_HZ);
+    normalize_array(gm_co, co_min, co_max, SAMPLING_FREQ_HZ);
+    normalize_array(gm_no2, no2_min, no2_max, SAMPLING_FREQ_HZ);
+    normalize_array(ens_tvoc, tvoc_min, tvoc_max, SAMPLING_FREQ_HZ);
+    normalize_array(ens_co2, co2_min, co2_max, SAMPLING_FREQ_HZ);
+    normalize_array(bme_temp, temp_min, temp_max, SAMPLING_FREQ_HZ);
 
-// main setup
-void setup() {
-    lcd.begin(); //Defining 16 columns and 2 rows of lcd display
-    lcd.clear();
-    lcd.backlight(); //To Power ON the back light
-    reset();
-    Serial.begin(115200);
-    sensorSetup();
-    motorSetup();
-}
-
-void computeRandomConfig(float current_theta, float current_x, float current_y) {
-    // compute a new orientation to turn to in random exploration within 180 deg of current
-    // computes target cooridnates using new theta
-    target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
-    float new_distance = random(15.0, 40.0) / 100.0;
-    float new_x = current_x + new_distance * cos(target_angle);
-    float new_y = current_y + new_distance * sin(target_angle);
-    target_X = constrain(new_x, 0.0, MAP_X);
-    target_Y = constrain(new_y, 0.0, MAP_Y);
-}
-
-// main loop
-void loop() {
-    if (scent_confirmed) {
-        /* scent confirmed after detetction and scanning, stop motors */
-        lcd.clear(); //Clean the screen
-        lcd.setCursor(0,0); 
-        lcd.print("SCENT  CONFIRMED");
-        setMotor(STOP, 0, enA, IN1, IN2);
-        setMotor(STOP, 0, enB, IN3, IN4);
-        delay(10000);
-        reset();
-    } 
-    else if (translation_complete == 1 && !scent_detected) {
-        Serial.print("---------------------- RANDOM EXPLORATION MODE ----------------------");
-        /* RANDOM SEARCH MODE 
-        Compute next random x, y to translate to */
-        
-        computeRandomConfig(state[2], state[0], state[1]);
-               
-    //    target_X = ARRAY_X[CURRENT_POINT];
-    //    target_Y = ARRAY_Y[CURRENT_POINT];
-    //    target_angle = getTheta(state[0], state[1], target_X, target_Y);
-    //    CURRENT_POINT++;
-        
-        rotation_complete = 0;
-        translation_complete = 0;
-    } 
-    else if (translation_complete == 1 && scent_detected) {
-        /* TARGETED SEARCH MODE 
-        Scent has been detected, scan different angles in position*/
-        Serial.println("\n\n\n-------***-------TARGETED SEARCH MODE-------***-------\n\n\n");        
-        if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
-            scan_mode = true;
-            // If sufficient samples have been taken, rotate to next position
-            
-            if (curr_scan == -1) {
-                // first scan, initialize
-                curr_scan++;
-                num_samples = 0;
-                scan_readings[0] = EMPTY_SCAN_READINGS[0];
-                target_angle = fmod(state[2] + ((-90) * PI / 180.0), 2*PI);
-                rotation_complete = 0;
-                translation_complete = 1;
-            }
-
-            lcd.setCursor(0, 0); 
-            lcd.print("ALCOHOL SCAN: ");
-            lcd.print(curr_scan);
-
-            if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
-                // completed samples for this scan, set to next scan
-                num_samples = 0;
-                curr_scan++;
-                target_angle = fmod(state[2] + ((scan_angle) * PI / 180.0), 2*PI);
-
-                rotation_complete = 0;
-                translation_complete = 1;
-            }
-        } 
-        else { // MOVING TOWARDS SCENT
-            scan_mode = false;
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            // Find direction of highest ethanol concentration
-            int max_i = 0;
-            float max_val = 0.0;
-            float val = 0.0;
-            int low_detection_count = 0;
-            for (int i = 0; i < NUM_SCANS; i++) {
-                float slope;
-                val = scan_readings[i].gm_eth_v;
-                float prev_val = scan_readings[i - 1].gm_eth_v;
-                if (i > 0) {
-                    slope = (val - prev_val) / (SCAN_TIME);
-                    if (slope <= 0.0) {
-                        low_detection_count++;
-                    }
-                }
-                if (val > max_val) {
-                    max_i = i;
-                    max_val = val;
-                }
-            }
-            
-            // Reverts back to RANDOM mode if low detection levels
-            if (low_detection_count == (NUM_SCANS - 1)) {
-                scent_detected = false;
-            } 
-            else {
-                // Set new coordinates in direction of highest concentration
-                lcd.print("MAX VALUE AT: ");
-                lcd.print(max_i);
-                target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
-                target_X = state[0] + TRANSLATION * cos(target_angle);
-                target_Y = state[1] + TRANSLATION * sin(target_angle);
-            }
-            
-            // reset for next time targeted search mode is reached
-            for (int i = 0; i < NUM_SCANS; i++) {
-                scan_readings[i] = EMPTY_SCAN_READINGS[i];
-            }
-            curr_scan = -1;
-            num_samples = 0;
-
-            rotation_complete = 0;
-            translation_complete = 0;
-        }
-    }
-    checkEncoders(); 
-    readSensors();
-}
-
-float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sensor_used) {
-    float sum_x = 0.0, sum_y = 0.0, sum_x2 = 0.0, sum_y2 = 0.0, sum_xy = 0.0, slope = 0.0; 
-    if (num_readings == 10) {
-        sum_x = 450.0;
-        sum_x2 = 28500.0;
-    }
-    if (num_readings == 30) {
-        sum_x = 4350.0;
-        sum_x2 = 85550000.0;
-    }
-    float y = 0.0;
-    for (int i = 0; i < num_readings; i++) {
-        if (sensor_used == 2) {
-            // grove voc
-            y = (100.0 * sensor_readings_set[i].gm_voc_v);
-        }
-        else if (sensor_used == 3) {
-            // grove ethanol
-            y = (100.0 * sensor_readings_set[i].gm_eth_v);
-        }
-        sum_y += y;
-        sum_y2 += (y * y);
-        sum_xy += (SAMPLING_PERIOD_MS * i * y / 10.0);
-    }
-   
-    slope = (num_readings * sum_xy - sum_x * sum_y) / (num_readings * sum_x2 - sum_x * sum_x);
-    return slope;
+    // grove voc
+    X[0] = getMin(gm_voc, SAMPLING_FREQ_HZ);
+    X[1] = getMax(gm_voc, SAMPLING_FREQ_HZ);
+    X[2] = getStdDev(gm_voc, SAMPLING_FREQ_HZ);
+    X[3] = getRms(gm_voc, SAMPLING_FREQ_HZ);
+    X[4] = getMean(gm_voc, SAMPLING_FREQ_HZ);
+    // grove eth
+    X[5] = getMin(gm_eth, SAMPLING_FREQ_HZ);
+    X[6] = getMax(gm_eth, SAMPLING_FREQ_HZ);
+    X[7] = getStdDev(gm_eth, SAMPLING_FREQ_HZ);
+    X[8] = getRms(gm_eth, SAMPLING_FREQ_HZ);
+    X[9] = getMean(gm_eth, SAMPLING_FREQ_HZ);
+    // grove no2
+    X[10] = getMin(gm_no2, SAMPLING_FREQ_HZ);
+    X[11] = getMax(gm_no2, SAMPLING_FREQ_HZ);
+    X[12] = getStdDev(gm_no2, SAMPLING_FREQ_HZ);
+    X[13] = getRms(gm_no2, SAMPLING_FREQ_HZ);
+    X[14] = getMean(gm_no2, SAMPLING_FREQ_HZ);
+    // grove co
+    X[15] = getMin(gm_co, SAMPLING_FREQ_HZ);
+    X[16] = getMax(gm_co, SAMPLING_FREQ_HZ);
+    X[17] = getStdDev(gm_co, SAMPLING_FREQ_HZ);
+    X[18] = getRms(gm_co, SAMPLING_FREQ_HZ);
+    X[19] = getMean(gm_co, SAMPLING_FREQ_HZ);
+    // ens_tvoc
+    X[20] = getMin(ens_tvoc, SAMPLING_FREQ_HZ);
+    X[21] = getMax(ens_tvoc, SAMPLING_FREQ_HZ);
+    X[22] = getStdDev(ens_tvoc, SAMPLING_FREQ_HZ);
+    X[23] = getRms(ens_tvoc, SAMPLING_FREQ_HZ);
+    X[24] = getMean(ens_tvoc, SAMPLING_FREQ_HZ);
+    // ens_co2
+    X[25] = getMin(ens_co2, SAMPLING_FREQ_HZ);
+    X[26] = getMax(ens_co2, SAMPLING_FREQ_HZ);
+    X[27] = getStdDev(ens_co2, SAMPLING_FREQ_HZ);
+    X[28] = getRms(ens_co2, SAMPLING_FREQ_HZ);
+    X[29] = getMean(ens_co2, SAMPLING_FREQ_HZ);
+    // bme temp
+    X[30] = getMin(bme_temp, SAMPLING_FREQ_HZ);
+    X[31] = getMax(bme_temp, SAMPLING_FREQ_HZ);
+    X[32] = getStdDev(bme_temp, SAMPLING_FREQ_HZ);
+    X[33] = getRms(bme_temp, SAMPLING_FREQ_HZ);
+    X[34] = getMean(bme_temp, SAMPLING_FREQ_HZ);
+    // currently not including humidity, pressure or altitude
 }
 
 // read from sensor every SAMPLING_PERIOD_MS
@@ -378,6 +405,11 @@ void readSensors() {
         sensor_readings_per_second[sample_count].gm_no2_v = gas.calcVol(gas.getGM102B());
         sensor_readings_per_second[sample_count].gm_co_v = gas.calcVol(gas.getGM702B());
 
+        gm_eth[sample_count] = gas.calcVol(gas.getGM302B());
+        gm_voc[sample_count] = gas.calcVol(gas.getGM502B());
+        gm_no2[sample_count] = gas.calcVol(gas.getGM102B());
+        gm_co[sample_count] = gas.calcVol(gas.getGM702B());
+
         sensor_reading.gm_eth_v = gas.calcVol(gas.getGM302B());
         sensor_reading.gm_voc_v = gas.calcVol(gas.getGM502B());
         sensor_reading.gm_no2_v = gas.calcVol(gas.getGM102B());
@@ -388,6 +420,8 @@ void readSensors() {
             ens160.measure(0);
             sensor_readings_per_second[sample_count].ens_TVOC = ens160.getTVOC();
             sensor_readings_per_second[sample_count].ens_CO2 = ens160.geteCO2();
+            ens_tvoc[sample_count] = ens160.getTVOC();
+            ens_co2[sample_count] = ens160.geteCO2();
             sensor_reading.ens_TVOC = ens160.getTVOC();
             sensor_reading.ens_CO2 = ens160.geteCO2();
         }
@@ -398,11 +432,15 @@ void readSensors() {
         sensor_readings_per_second[sample_count].bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
         sensor_readings_per_second[sample_count].bme_humidity = bme.readHumidity();
 
+        bme_temp[sample_count] = bme.readTemperature();
+        bme_humidity[sample_count] = bme.readHumidity();
+        bme_pressure[sample_count] = bme.readPressure();
+        bme_altitude[sample_count] = bme.readAltitude(SEALEVELPRESSURE_HPA);
+
         sensor_reading.bme_temp = bme.readTemperature();
         sensor_reading.bme_pressure = bme.readPressure();
         sensor_reading.bme_altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
         sensor_reading.bme_humidity = bme.readHumidity();
-
         
         lcd.setCursor(0, 1);
         lcd.print("C2:");
@@ -438,14 +476,35 @@ void readSensors() {
         } 
        
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
+            if (scent_confirmed == true) {
+                // confirmed that there is a scent there, do classification
+                featureSetup();
+
+                int* predicted = classifier.predict(X);
+                int idx = predicted[0];
+                char* pred = classifier.idxToLabel(idx);
+
+                Serial.println("votes");
+                Serial.println(predicted[1]);
+                Serial.println(predicted[2]);
+                Serial.println(predicted[3]);
+                Serial.println(predicted[4]);
+
+                Serial.println("Classified Label: ");
+                Serial.println(pred);
+                
+                lcd.clear();
+                lcd.setCursor(0, 1); 
+                lcd.print(pred);
+            }
             // find best fit slope of ethanol readings over a period of a second
             float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
             Serial.println(slope);
             if (slope > SLOPE_THRESHOLD && scent_detected == false) {
                 scent_detected = true;
                 translation_complete = 1;
-                
             }
+            
         }
 
         // Save values
@@ -460,14 +519,46 @@ void readSensors() {
     }
 }
 
+/* MOTOR FUNCTIONS */
+
+// motor setup 
+void motorSetup() {
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
+    pinMode(enA, OUTPUT);
+    pinMode(enB, OUTPUT);
+    
+    pinMode(M1_ENCA, INPUT);
+    pinMode(M1_ENCB, INPUT);
+    attachInterrupt(digitalPinToInterrupt(M1_ENCA), readEncoderM1, RISING);
+    
+    pinMode(M2_ENCA,INPUT);
+    pinMode(M2_ENCB,INPUT);
+    attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
+  
+    Serial.println("Starting in 5s");
+    delay(5000);
+    randomSeed(analogRead(0));
+}
+
+// compute random x, y, orientation
+void computeRandomConfig(float current_theta, float current_x, float current_y) {
+    // compute a new orientation to turn to in random exploration within 180 deg of current
+    // computes target cooridnates using new theta
+    target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
+    float new_distance = random(15.0, 40.0) / 100.0;
+    float new_x = current_x + new_distance * cos(target_angle);
+    float new_y = current_y + new_distance * sin(target_angle);
+    target_X = constrain(new_x, 0.0, MAP_X);
+    target_Y = constrain(new_y, 0.0, MAP_Y);
+}
+
 // odometry computations and main loop commands
 void checkEncoders() {
   currentMotorMillis = millis();
   if (currentMotorMillis > prevMotorMillis + PERIOD) {
-//    Serial.print("M1_encoder_val: ");
-//    Serial.println(M1_encoder_val);
-//    Serial.print("M2_encoder_val: ");
-//    Serial.println(M2_encoder_val);
 
     countsLeft += M1_encoder_val;
     if (abs(M1_encoder_val) > 1000) {
@@ -591,33 +682,6 @@ void checkEncoders() {
   }
 }
 
-
-// reset state
-void reset() {
-    setMotor(STOP, 0, enA, IN1, IN2);
-    setMotor(STOP, 0, enB, IN3, IN4);
-    state[0] = 0.0;
-    state[1] = 0.0;
-    state[2] = 0.0;
-    last_state[0] = 0.0;
-    last_state[1] = 0.0;
-    last_state[2] = 0.0;
-    countsLeft = 0;
-    countsRight = 0;
-    rotation_complete = 1;
-    translation_complete = 1;
-    
-    scent_detected = false;
-    scent_confirmed = false;
-    scan_mode = false;
-    for (int i = 0; i < NUM_SCANS; i++) {
-        scan_readings[i] = EMPTY_SCAN_READINGS[i];
-    }
-    curr_scan = -1;
-    num_samples = 0;
-    lcd.clear();
-}
-
 // translate from current coordinate to target coordinate
 void translation(float current_x, float current_y, float target_x, float target_y) {
     wheelSpeedLeft = 150;
@@ -676,43 +740,6 @@ void rotation(float current_theta, float target_theta) {
     }
 }
 
-// convert from radians to degrees
-float rad2deg(float theta) {
-    return theta * (180.0) / PI;
-}
-
-// get target orientation to get from one coordiante to the other
-float getTheta(float x1, float y1, float x2, float y2) {
-    // put into local coordinate system
-    // returns radians
-    x2 = x2 - x1;
-    y2 = y2 - y1;
-    float theta = 0.0;
-    
-    if ((fabs(x2) < 1e-7) && (y2 < 0)) {
-        theta = 1.5 * PI;
-    }
-    else if ((x2 == 0) and (y2 > 0)) {
-        theta = 0.5 * PI;
-    }
-    else {
-        theta = atan2(y2, x2);
-    } 
-    if (theta < 0) {
-        theta = theta + 2 * PI;
-    }
-    theta = fmod(theta, 2 * PI);
-    if (theta > PI) {
-        theta = theta - 2 * PI;
-    }
-    return theta;
-}
-
-// get the l2 distance between 2 points
-float getDistance(float x1, float y1, float x2, float y2) {
-    return sqrtf(powf(x1 - x2, 2) + powf(y1 - y2, 2));
-}
-
 // send PWM signal to motors to go forward, backward, or turn
 void setMotor(int dir, int pwmVal, int pwm_pin, int in1, int in2){
     analogWrite(pwm_pin, pwmVal);
@@ -750,4 +777,155 @@ void readEncoderM2(){
     else {
         M2_encoder_val--;
     }
+}
+
+/* UTILITY FUNCTIONS */
+// reset state
+void reset() {
+    setMotor(STOP, 0, enA, IN1, IN2);
+    setMotor(STOP, 0, enB, IN3, IN4);
+    state[0] = 0.0;
+    state[1] = 0.0;
+    state[2] = 0.0;
+    last_state[0] = 0.0;
+    last_state[1] = 0.0;
+    last_state[2] = 0.0;
+    countsLeft = 0;
+    countsRight = 0;
+    rotation_complete = 1;
+    translation_complete = 1;
+    
+    scent_detected = false;
+    scent_confirmed = false;
+    scan_mode = false;
+    for (int i = 0; i < NUM_SCANS; i++) {
+        scan_readings[i] = EMPTY_SCAN_READINGS[i];
+    }
+    curr_scan = -1;
+    num_samples = 0;
+    lcd.clear();
+}
+
+/* MAIN FUNCTIONS */
+// main setup
+void setup() {
+    lcd.begin(); //Defining 16 columns and 2 rows of lcd display
+    lcd.clear();
+    lcd.backlight(); //To Power ON the back light
+    reset();
+    Serial.begin(115200);
+    sensorSetup();
+    motorSetup();
+}
+
+// main loop
+void loop() {
+    if (scent_confirmed) {
+        /* scent confirmed after detetction and scanning, stop motors */
+        lcd.clear(); //Clean the screen
+        lcd.setCursor(0,0); 
+        lcd.print("SCENT  CONFIRMED");
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+        delay(10000);
+        reset();
+    } 
+    else if (translation_complete == 1 && !scent_detected) {
+        Serial.print("---------------------- RANDOM EXPLORATION MODE ----------------------");
+        /* RANDOM SEARCH MODE 
+        Compute next random x, y to translate to */
+        
+        computeRandomConfig(state[2], state[0], state[1]);
+               
+    //    target_X = ARRAY_X[CURRENT_POINT];
+    //    target_Y = ARRAY_Y[CURRENT_POINT];
+    //    target_angle = getTheta(state[0], state[1], target_X, target_Y);
+    //    CURRENT_POINT++;
+        
+        rotation_complete = 0;
+        translation_complete = 0;
+    } 
+    else if (translation_complete == 1 && scent_detected) {
+        /* TARGETED SEARCH MODE 
+        Scent has been detected, scan different angles in position*/
+        Serial.println("\n\n\n-------***-------TARGETED SEARCH MODE-------***-------\n\n\n");        
+        if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
+            scan_mode = true;
+            // If sufficient samples have been taken, rotate to next position
+            
+            if (curr_scan == -1) {
+                // first scan, initialize
+                curr_scan++;
+                num_samples = 0;
+                scan_readings[0] = EMPTY_SCAN_READINGS[0];
+                target_angle = fmod(state[2] + ((-90) * PI / 180.0), 2*PI);
+                rotation_complete = 0;
+                translation_complete = 1;
+            }
+
+            lcd.setCursor(0, 0); 
+            lcd.print("ALCOHOL SCAN: ");
+            lcd.print(curr_scan);
+
+            if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
+                // completed samples for this scan, set to next scan
+                num_samples = 0;
+                curr_scan++;
+                target_angle = fmod(state[2] + ((scan_angle) * PI / 180.0), 2*PI);
+
+                rotation_complete = 0;
+                translation_complete = 1;
+            }
+        } 
+        else { // MOVING TOWARDS SCENT
+            scan_mode = false;
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            // Find direction of highest ethanol concentration
+            int max_i = 0;
+            float max_val = 0.0;
+            float val = 0.0;
+            int low_detection_count = 0;
+            for (int i = 0; i < NUM_SCANS; i++) {
+                float slope;
+                val = scan_readings[i].gm_eth_v;
+                float prev_val = scan_readings[i - 1].gm_eth_v;
+                if (i > 0) {
+                    slope = (val - prev_val) / (SCAN_TIME);
+                    if (slope <= 0.0) {
+                        low_detection_count++;
+                    }
+                }
+                if (val > max_val) {
+                    max_i = i;
+                    max_val = val;
+                }
+            }
+            
+            // Reverts back to RANDOM mode if low detection levels
+            if (low_detection_count == (NUM_SCANS - 1)) {
+                scent_detected = false;
+            } 
+            else {
+                // Set new coordinates in direction of highest concentration
+                lcd.print("MAX VALUE AT: ");
+                lcd.print(max_i);
+                target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
+                target_X = state[0] + TRANSLATION * cos(target_angle);
+                target_Y = state[1] + TRANSLATION * sin(target_angle);
+            }
+            
+            // reset for next time targeted search mode is reached
+            for (int i = 0; i < NUM_SCANS; i++) {
+                scan_readings[i] = EMPTY_SCAN_READINGS[i];
+            }
+            curr_scan = -1;
+            num_samples = 0;
+
+            rotation_complete = 0;
+            translation_complete = 0;
+        }
+    }
+    checkEncoders(); 
+    readSensors();
 }

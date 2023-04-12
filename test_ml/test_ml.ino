@@ -32,6 +32,15 @@ LiquidCrystal_I2C lcd(0x3F, 16, 2);
 Eloquent::ML::Port::SVM classifier;
 float X[35];
 
+// dataset dependent values
+const float voc_min = 0.92, voc_max = 4.84;
+const float eth_min = 0.89, eth_max = 4.78;
+const float no2_min = 0.77, no2_max = 4.67;
+const float co_min = 1.06, co_max = 4.94;
+const float tvoc_min = 1.0, tvoc_max = 25634.0;
+const float co2_min = 400.0, co2_max = 12119.0;
+const float temp_min = 21.79, temp_max = 27.37;
+
 struct SensorReading
 {
     float gm_no2_v = 0.0;
@@ -157,6 +166,12 @@ float getRms(float* val, int arrayCount) {
     return sqrt(rms);
 }
 
+void normalize_array(float* val, float min_val, float max_val, int arrayCount) {
+    for (int i = 0; i < arrayCount; i++) {
+        val[i] = (val[i] - min_val) / (max_val - min_val);
+    }
+}
+
 // read from sensor every SAMPLING_PERIOD_MS
 void readSensors() {
     // Take timestamp so we can hit our target frequency
@@ -187,29 +202,17 @@ void readSensors() {
         // Read from BME-280
         bme_temp[sample_count] = bme.readTemperature();
         sensor_reading.bme_temp = bme.readTemperature();
-        
-//        Serial.print(sensor_reading.gm_voc_v);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.gm_no2_v);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.gm_eth_v);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.gm_co_v);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.ens_TVOC);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.ens_CO2);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.bme_temp);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.bme_pressure);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.bme_altitude);
-//        Serial.print(",");
-//        Serial.print(sensor_reading.bme_humidity);
-//        Serial.print(",");
 
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
+            // do normalization first
+            normalize_array(gm_voc, voc_min, voc_max, SAMPLING_FREQ_HZ);
+            normalize_array(gm_eth, eth_min, eth_max, SAMPLING_FREQ_HZ);
+            normalize_array(gm_co, co_min, co_max, SAMPLING_FREQ_HZ);
+            normalize_array(gm_no2, no2_min, no2_max, SAMPLING_FREQ_HZ);
+            normalize_array(ens_tvoc, tvoc_min, tvoc_max, SAMPLING_FREQ_HZ);
+            normalize_array(ens_co2, co2_min, co2_max, SAMPLING_FREQ_HZ);
+            normalize_array(bme_temp, temp_min, temp_max, SAMPLING_FREQ_HZ);
+            
             // calculate min, max, std, rms, avg for each
             // grove voc
             X[0] = getMin(gm_voc, SAMPLING_FREQ_HZ);
