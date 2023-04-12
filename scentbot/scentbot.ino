@@ -446,8 +446,8 @@ void readSensors() {
         lcd.print("C2:");
         lcd.print(sensor_reading.ens_CO2);
         lcd.setCursor(9, 1);
-        lcd.print("C:");
-        lcd.print(sensor_reading.gm_co_v);
+        lcd.print("E:");
+        lcd.print(sensor_reading.gm_eth_v);
 
         Serial.print(sensor_reading.gm_voc_v);
         Serial.print(",");
@@ -469,14 +469,13 @@ void readSensors() {
         Serial.print(",");
         Serial.print(sensor_reading.bme_humidity);
         Serial.print(",");
-
-        if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) && (scent_detected == true)) {
-            scent_confirmed = true;
-            scent_detected = false;
-        } 
        
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
-            if (scent_confirmed == true) {
+
+            if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) && (scent_detected == true)) {
+                scent_confirmed = true;
+                scent_detected = false;
+                
                 // confirmed that there is a scent there, do classification
                 featureSetup();
 
@@ -496,15 +495,17 @@ void readSensors() {
                 lcd.clear();
                 lcd.setCursor(0, 1); 
                 lcd.print(pred);
+            } 
+
+            else {
+                // find best fit slope of ethanol readings over a period of a second
+                float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
+                Serial.println(slope);
+                if (slope > SLOPE_THRESHOLD && scent_detected == false) {
+                    scent_detected = true;
+                    translation_complete = 1;
+                }
             }
-            // find best fit slope of ethanol readings over a period of a second
-            float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
-            Serial.println(slope);
-            if (slope > SLOPE_THRESHOLD && scent_detected == false) {
-                scent_detected = true;
-                translation_complete = 1;
-            }
-            
         }
 
         // Save values
@@ -822,7 +823,6 @@ void setup() {
 void loop() {
     if (scent_confirmed) {
         /* scent confirmed after detetction and scanning, stop motors */
-        lcd.clear(); //Clean the screen
         lcd.setCursor(0,0); 
         lcd.print("SCENT  CONFIRMED");
         setMotor(STOP, 0, enA, IN1, IN2);

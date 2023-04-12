@@ -5,7 +5,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include "ScioSense_ENS160.h"
-#include "MultiClassification_linear.h"
+#include "MultiClassification_linear_no_ambient.h"
 #include <LiquidCrystal_I2C.h>
 
 // FOR SENSORS
@@ -36,10 +36,10 @@ float X[35];
 const float voc_min = 0.92, voc_max = 4.84;
 const float eth_min = 0.89, eth_max = 4.78;
 const float no2_min = 0.77, no2_max = 4.67;
-const float co_min = 1.06, co_max = 4.94;
+const float co_min = 1.21, co_max = 4.94;
 const float tvoc_min = 1.0, tvoc_max = 25634.0;
 const float co2_min = 400.0, co2_max = 12119.0;
-const float temp_min = 21.79, temp_max = 27.37;
+const float temp_min = 21.79, temp_max = 24.59;
 
 struct SensorReading
 {
