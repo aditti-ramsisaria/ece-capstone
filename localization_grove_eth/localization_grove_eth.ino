@@ -107,10 +107,9 @@ float target_angle = 0.0;
 int rotation_complete = 1;
 int translation_complete = 1;
 
-// const int NUM_POINTS = 7;
-// const float ARRAY_X[NUM_POINTS] = {0.0, 0.3, 0.3, 0.3, 0.9, 0.9, 0.9};
-// const float ARRAY_Y[NUM_POINTS] = {0.0, 0.5, 1.0, 1.5, 1.5, 1.0, 0.5};
-
+// const int NUM_POINTS = 1;
+// const float ARRAY_X[NUM_POINTS] = {0.5};
+// const float ARRAY_Y[NUM_POINTS] = {0.0};
 // int CURRENT_POINT = 0;
 
 // right - M2 - B
@@ -207,13 +206,12 @@ void loop() {
         /* RANDOM SEARCH MODE 
         Compute next random x, y to translate to */
         
-        // computeRandomConfig(state[2], state[0], state[1]);
         computeRandomConfig(state[2], state[0], state[1]);
                
-//        target_X = ARRAY_X[CURRENT_POINT];
-//        target_Y = ARRAY_Y[CURRENT_POINT];
-//        target_angle = getTheta(state[0], state[1], target_X, target_Y);
-//        CURRENT_POINT++;
+    //    target_X = ARRAY_X[CURRENT_POINT];
+    //    target_Y = ARRAY_Y[CURRENT_POINT];
+    //    target_angle = getTheta(state[0], state[1], target_X, target_Y);
+    //    CURRENT_POINT++;
         
         rotation_complete = 0;
         translation_complete = 0;
@@ -384,7 +382,11 @@ void readSensors() {
 void checkEncoders() {
   currentMotorMillis = millis();
   if (currentMotorMillis > prevMotorMillis + PERIOD) {
-    
+//    Serial.print("M1_encoder_val: ");
+//    Serial.println(M1_encoder_val);
+//    Serial.print("M2_encoder_val: ");
+//    Serial.println(M2_encoder_val);
+
     countsLeft += M1_encoder_val;
     if (abs(M1_encoder_val) > 1000) {
         Serial.print("M1_encoder_val: ");
@@ -411,6 +413,7 @@ void checkEncoders() {
     }
     
     M2_encoder_val = 0;
+
 
     t = (currentMotorMillis - prevMotorMillis) / 1000.0;
 
@@ -443,6 +446,12 @@ void checkEncoders() {
 //    lcd.print(state[0]);
 //    lcd.print(" Y: ");
 //    lcd.print(state[1]);
+//    Serial.print("x: ");
+//    Serial.println(state[0]);
+//    Serial.print("y: ");
+//    Serial.println(state[1]);
+//    Serial.print("theta: ");
+//    Serial.println(state[2]);
 
     long duration;
     float distance;
