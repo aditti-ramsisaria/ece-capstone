@@ -654,8 +654,12 @@ void checkEncoders() {
     float distance_left;
     float distance_right;
     distance_front = readUltrasonic(trigPin_front, echoPin_front);
-    distance_left = readUltrasonic(trigPin_left, echoPin_left);
+//    distance_left = readUltrasonic(trigPin_left, echoPin_left);
+    distance_left = 1000;
     distance_right = readUltrasonic(trigPin_right, echoPin_right);
+    Serial.println("Left, right ultrasonic: ");
+    Serial.println(distance_left);
+    Serial.println(distance_right);
 
     if (distance_front < DISTANCE_THRESHOLD) {
         Serial.println("STOP FROM ULTRASONIC");
@@ -680,12 +684,16 @@ void checkEncoders() {
         target_Y = state[1] + TRANSLATION * sin(target_angle);
         Serial.println(target_Y);
         reverse_mode = false;
-    } else if ((distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD)) { // && scan_mode
+    } else if (scan_mode && (distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD)) { // && scan_mode
         // If in scan_mode and rotating
         Serial.println("LETS BACK IT UP");
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("side obstacle");
         rotation_complete = 1;
-        target_X = state[0] + TRANSLATION * cos(target_angle);
-        target_Y = state[1] + TRANSLATION * sin(target_angle);
+        translation_complete = 0;
+        target_X = state[0] + TRANSLATION * cos(PI);
+        target_Y = state[1] + TRANSLATION * sin(PI);
         reverse_mode = true;
     } else {
         reverse_mode = false;
