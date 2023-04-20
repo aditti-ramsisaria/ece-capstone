@@ -8,6 +8,12 @@
 #include <Adafruit_BME280.h>
 #include "ScioSense_ENS160.h"
 #include "MultiClassification_linear.h"
+#include <Adafruit_NeoPixel.h>
+
+// FOR NEOPIXEL
+#define PIXEL_PIN   45   // Digital IO pin connected to the NeoPixels.
+#define PIXEL_COUNT 12   // number of neopixel (change this accordingly)
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, PIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // FOR SENSORS
 
@@ -518,6 +524,8 @@ void readSensors() {
                 lcd.clear();
                 lcd.setCursor(0, 1); 
                 lcd.print(pred);
+                confirmedScent(pred);
+
             } 
 
             else {
@@ -526,6 +534,7 @@ void readSensors() {
                 Serial.println(slope);
                 if (slope > SLOPE_THRESHOLD && scent_detected == false) {
                     scent_detected = true;
+                    strip.fill(strip.Color(0,0,0), 0, 12);
                     translation_complete = 1;
                 }
             }
@@ -563,7 +572,8 @@ void motorSetup() {
     attachInterrupt(digitalPinToInterrupt(M2_ENCA), readEncoderM2, RISING);
   
     Serial.println("Starting in 5s");
-    delay(5000);
+    //delay(5000);
+    readySetGo();
     randomSeed(analogRead(0));
 }
 
@@ -668,6 +678,8 @@ void checkEncoders() {
         lcd.print("WALL   DETECTED");
         lcd.setCursor(0, 1);
         lcd.print("BACKING UP...");
+        // SET NEOPIXEL TO RED
+        wallDetected();
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
         delay(500);
@@ -684,7 +696,7 @@ void checkEncoders() {
         target_Y = state[1] + TRANSLATION * sin(target_angle);
         Serial.println(target_Y);
         reverse_mode = false;
-    } else if (scan_mode && (distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD)) { // && scan_mode
+    } else if ((scan_mode) && ((distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD))) { // && scan_mode
         // If in scan_mode and rotating
         Serial.println("LETS BACK IT UP");
         lcd.clear();
@@ -694,6 +706,7 @@ void checkEncoders() {
         translation_complete = 0;
         target_X = state[0] + TRANSLATION * cos(PI);
         target_Y = state[1] + TRANSLATION * sin(PI);
+        wallDetected();
         reverse_mode = true;
     } else {
         reverse_mode = false;
@@ -847,12 +860,89 @@ void reset() {
     lcd.clear();
 }
 
+/* NEOPIXEL FUNCTIONS */
+
+void readySetGo() {
+  //reset Neopixel to off state
+  strip.fill(strip.Color(0,0,0), 0, 12);
+  // set first 4 to red
+  for(uint16_t i=0; i<4; i++) {
+    strip.setPixelColor(i, strip.Color(255, 0, 0));
+    strip.show();
+  }
+  delay(1666);
+  // setting next 4 pixels to yellow
+  for(uint16_t i=4; i<8; i++) {
+    strip.setPixelColor(i, strip.Color(204, 204, 0));
+    strip.show();
+  }
+  delay(1666);
+  // setting last 4 pixels to green
+  for(uint16_t i=8; i<12; i++) {
+    strip.setPixelColor(i, strip.Color(0, 255, 0));
+    strip.show();
+  }
+  delay(1666);
+}
+
+void rainbowCycle() {
+  strip.fill(strip.Color(0,0,0), 0, 12);
+  uint16_t i;
+  for(i=0; i< strip.numPixels(); i++) {
+    strip.setPixelColor(i, RGBWheel(((i * 256 / strip.numPixels())) & 255));
+  }
+  strip.show();
+}
+
+void wallDetected() {
+  for(uint16_t i=0; i<strip.numPixels(); i++) {
+    strip.setPixelColor(i, strip.Color(255, 0, 0));
+    strip.show();
+  }
+}
+
+void confirmedScent(char* label) {
+  strip.fill(strip.Color(0,0,0), 0, 12);
+  if(label == "alcohol") {
+    for (int ii = 0; ii < 12; ++ii) {  
+      strip.setPixelColor(ii, 0, 255, 0);  
+    }
+  } else if(label == "paint thinner") {
+    for (int ii = 0; ii < 12; ++ii) {  
+      strip.setPixelColor(ii, 76, 0, 153);  
+    }
+  } else {
+    for (int ii = 0; ii < 12; ++ii) {  
+      strip.setPixelColor(ii, 0, 0, 255);  
+    }
+  }
+  strip.show();  
+}
+
+// Input a value 0 to 255 to get a color value.
+// The colours are a transition r - g - b - back to r.
+uint32_t RGBWheel(byte WheelPos) {
+  WheelPos = 255 - WheelPos;
+  if(WheelPos < 85) {
+    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if(WheelPos < 170) {
+    WheelPos -= 85;
+    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+
 /* MAIN FUNCTIONS */
 // main setup
 void setup() {
     lcd.begin(); //Defining 16 columns and 2 rows of lcd display
     lcd.clear();
     lcd.backlight(); //To Power ON the back light
+    strip.begin();
+    strip.show();
+    strip.setBrightness(30);
     reset();
     Serial.begin(115200);
     sensorSetup();
@@ -874,7 +964,8 @@ void loop() {
         Serial.print("---------------------- RANDOM EXPLORATION MODE ----------------------");
         /* RANDOM SEARCH MODE 
         Compute next random x, y to translate to */
-        
+        // NEOPIXEL RAINBOW CYCLE
+        rainbowCycle();
         computeRandomConfig(state[2], state[0], state[1]);
                
     //    target_X = ARRAY_X[CURRENT_POINT];
@@ -892,7 +983,6 @@ void loop() {
         if (curr_scan < NUM_SCANS) { // SCANNING IN-PLACE
             scan_mode = true;
             // If sufficient samples have been taken, rotate to next position
-            
             if (curr_scan == -1) {
                 // first scan, initialize
                 curr_scan++;
@@ -906,6 +996,9 @@ void loop() {
             lcd.setCursor(0, 0); 
             lcd.print("ALCOHOL SCAN: ");
             lcd.print(curr_scan);
+            strip.setPixelColor(curr_scan*2, strip.Color(255, 128, 0));
+            strip.setPixelColor((curr_scan*2) + 1, strip.Color(255, 128, 0));
+            strip.show();
 
             if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
                 // completed samples for this scan, set to next scan
@@ -945,6 +1038,7 @@ void loop() {
             // Reverts back to RANDOM mode if low detection levels
             if (low_detection_count == (NUM_SCANS - 1)) {
                 scent_detected = false;
+                rainbowCycle();
             } 
             else {
                 // Set new coordinates in direction of highest concentration
@@ -953,6 +1047,7 @@ void loop() {
                 target_angle = state[2] - (scan_angle * (NUM_SCANS - 1 - max_i)) * PI / 180;
                 target_X = state[0] + TRANSLATION * cos(target_angle);
                 target_Y = state[1] + TRANSLATION * sin(target_angle);
+                strip.fill(strip.Color(0,0,0), 0, 12);
             }
             
             // reset for next time targeted search mode is reached
