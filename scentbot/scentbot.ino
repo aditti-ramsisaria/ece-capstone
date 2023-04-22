@@ -23,7 +23,7 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, PIXEL_PIN, NEO_GRB + NE
 #define echoPin_left 15
 #define trigPin_right 16
 #define echoPin_right 17
-const int DISTANCE_THRESHOLD = 5; // cm
+const int DISTANCE_THRESHOLD = 10; // cm
 
 // Settings
 #define serialCommunicationSpeed 115200               
@@ -66,7 +66,7 @@ SensorReading sensor_readings_per_second[SAMPLING_FREQ_HZ];
 int sample_count = 0; // goes from 0 to SAMPLING_FREQ_HZ - 1
 
 // For Classifier
-
+// CLASSIFICTION_DEBUG
 Eloquent::ML::Port::SVM classifier;
 float X[35];
 float gm_voc[SAMPLING_FREQ_HZ];
@@ -167,9 +167,13 @@ bool reverse_mode = false;
 
 // FOR SCANNING
 
+const float CONFIRMATION_THRESHOLD_TVOC = 600.0;
 const float CONFIRMATION_THRESHOLD_GROVE_ETH = 2.0;
-const float SLOPE_THRESHOLD = 0.02;
+const float SLOPE_THRESHOLD_ETH = 0.02;
+const float SLOPE_THRESHOLD_TVOC = 20.0;
+
 const float TRANSLATION = 0.15; // Translation (m)
+const float BACK_TRANSLATION = 0.1; // (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 3; // Time stopped to sample (s)
@@ -261,6 +265,9 @@ float bestFitSlope(SensorReading *sensor_readings_set, int num_readings, int sen
         else if (sensor_used == 3) {
             // grove ethanol
             y = (100.0 * sensor_readings_set[i].gm_eth_v);
+        }
+        else if (sensor_used == 4) {
+            y = (100.0 * sensor_readings_set[i].ens_TVOC);
         }
         sum_y += y;
         sum_y2 += (y * y);
@@ -472,54 +479,30 @@ void readSensors() {
         sensor_reading.bme_humidity = bme.readHumidity();
         
         lcd.setCursor(0, 1);
-        lcd.print("C2:");
-        lcd.print(sensor_reading.ens_CO2);
+        lcd.print("T:");
+        lcd.print(sensor_reading.ens_TVOC);
         lcd.setCursor(9, 1);
         lcd.print("E:");
         lcd.print(sensor_reading.gm_eth_v);
-
-        Serial.print(sensor_reading.gm_voc_v);
-        Serial.print(",");
-        Serial.print(sensor_reading.gm_no2_v);
-        Serial.print(",");
-        Serial.print(sensor_reading.gm_eth_v);
-        Serial.print(",");
-        Serial.print(sensor_reading.gm_co_v);
-        Serial.print(",");
-        Serial.print(sensor_reading.ens_TVOC);
-        Serial.print(",");
-        Serial.print(sensor_reading.ens_CO2);
-        Serial.print(",");
-        Serial.print(sensor_reading.bme_temp);
-        Serial.print(",");
-        Serial.print(sensor_reading.bme_pressure);
-        Serial.print(",");
-        Serial.print(sensor_reading.bme_altitude);
-        Serial.print(",");
-        Serial.print(sensor_reading.bme_humidity);
-        Serial.print(",");
        
         if (sample_count == (SAMPLING_FREQ_HZ - 1)) {
-
-            if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH) && (scent_detected == true)) {
+        // DEBUG: TESTING AND INSTEAD OF OR
+            if ((sensor_reading.gm_eth_v > CONFIRMATION_THRESHOLD_GROVE_ETH || 
+                 sensor_reading.ens_TVOC > CONFIRMATION_THRESHOLD_TVOC) && 
+                 (scent_detected == true)) {
+                Serial.println("CONFIRMATION eth, tvoc");
+                Serial.print(sensor_reading.gm_eth_v);
+                Serial.println(sensor_reading.ens_TVOC);
+            
                 scent_confirmed = true;
                 scent_detected = false;
                 
-                // confirmed that there is a scent there, do classification
+                // CLASSIFICATION_DEBUG confirmed that there is a scent there, do classification
                 featureSetup();
 
                 int* predicted = classifier.predict(X);
                 int idx = predicted[0];
                 char* pred = classifier.idxToLabel(idx);
-
-                Serial.println("votes");
-                Serial.println(predicted[1]);
-                Serial.println(predicted[2]);
-                Serial.println(predicted[3]);
-                Serial.println(predicted[4]);
-
-                Serial.println("Classified Label: ");
-                Serial.println(pred);
                 
                 lcd.clear();
                 lcd.setCursor(0, 1); 
@@ -530,9 +513,14 @@ void readSensors() {
 
             else {
                 // find best fit slope of ethanol readings over a period of a second
-                float slope = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
-                Serial.println(slope);
-                if (slope > SLOPE_THRESHOLD && scent_detected == false) {
+                float slope_grove_eth = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 3);
+                float slope_ens_tvoc = bestFitSlope(sensor_readings_per_second, SAMPLING_FREQ_HZ, 4);
+                Serial.print("slopes eth, tvoc: ");
+                Serial.println(slope_grove_eth);
+                Serial.println(slope_ens_tvoc);
+                if ((scent_detected == false) && 
+                    (((slope_grove_eth > SLOPE_THRESHOLD_ETH) || 
+                    (slope_ens_tvoc > SLOPE_THRESHOLD_TVOC)))) {
                     scent_detected = true;
                     strip.fill(strip.Color(0,0,0), 0, 12);
                     translation_complete = 1;
@@ -544,7 +532,7 @@ void readSensors() {
         
         if (scan_mode && (rotation_complete == 1) && (num_samples < (SCAN_TIME * SAMPLING_FREQ_HZ))) {
             scan_readings[curr_scan].gm_eth_v += (sensor_reading.gm_eth_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
-            scan_readings[curr_scan].gm_voc_v += (sensor_reading.gm_voc_v / (SCAN_TIME * SAMPLING_FREQ_HZ));
+            scan_readings[curr_scan].ens_TVOC += (sensor_reading.ens_TVOC / (SCAN_TIME * SAMPLING_FREQ_HZ));
             num_samples++;
         }
         sample_count = (sample_count + 1) % SAMPLING_FREQ_HZ;
@@ -648,30 +636,14 @@ void checkEncoders() {
     state[1] = last_state[1] + ((t / 6) * (k01 + 4 * k11 + k31)); // y
     state[2] = fmod(last_state[2] + (t * w_robot), 2 * PI);
 
-//    lcd.setCursor(0, 0);
-//    lcd.print("X: ");
-//    lcd.print(state[0]);
-//    lcd.print(" Y: ");
-//    lcd.print(state[1]);
-//    Serial.print("x: ");
-//    Serial.println(state[0]);
-//    Serial.print("y: ");
-//    Serial.println(state[1]);
-//    Serial.print("theta: ");
-//    Serial.println(state[2]);
-
     float distance_front;
     float distance_left;
     float distance_right;
     distance_front = readUltrasonic(trigPin_front, echoPin_front);
-//    distance_left = readUltrasonic(trigPin_left, echoPin_left);
-    distance_left = 1000;
+    distance_left = readUltrasonic(trigPin_left, echoPin_left);
     distance_right = readUltrasonic(trigPin_right, echoPin_right);
-    Serial.println("Left, right ultrasonic: ");
-    Serial.println(distance_left);
-    Serial.println(distance_right);
 
-    if (distance_front < DISTANCE_THRESHOLD) {
+    if ((distance_front < DISTANCE_THRESHOLD) && (scent_detected == false)) {
         Serial.println("STOP FROM ULTRASONIC");
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -682,34 +654,45 @@ void checkEncoders() {
         wallDetected();
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
-        delay(500);
+        delay(100);
         lcd.clear();//Clean the screen
         lcd.setCursor(0, 0); 
-        rotation_complete = 0;
-        translation_complete = 0;
-        target_angle = fmod(state[2] - PI, 2*PI);
-        Serial.println("TARGET ANGLE");
-        Serial.println(rad2deg(state[2]));
-        Serial.println(rad2deg(target_angle));
-        target_X = state[0] + TRANSLATION * cos(target_angle);
-        Serial.println(target_X);
-        target_Y = state[1] + TRANSLATION * sin(target_angle);
-        Serial.println(target_Y);
-        reverse_mode = false;
-    } else if ((scan_mode) && ((distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD))) { // && scan_mode
-        // If in scan_mode and rotating
-        Serial.println("LETS BACK IT UP");
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("side obstacle");
         rotation_complete = 1;
         translation_complete = 0;
-        target_X = state[0] + TRANSLATION * cos(PI);
-        target_Y = state[1] + TRANSLATION * sin(PI);
-        wallDetected();
+        target_angle = fmod(state[2] - PI, 2*PI);
+        target_X = state[0] + BACK_TRANSLATION * cos(target_angle);
+        target_Y = state[1] + BACK_TRANSLATION * sin(target_angle);
         reverse_mode = true;
-    } else {
-        reverse_mode = false;
+    } else if (((distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD))) {
+        // If in scan_mode and rotating
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("SIDE   DETECTED");
+        lcd.setCursor(0, 1);
+        lcd.print("BACKING UP...");
+        wallDetected();
+        setMotor(STOP, 0, enA, IN1, IN2);
+        setMotor(STOP, 0, enB, IN3, IN4);
+        delay(100);
+        lcd.clear();//Clean the screen
+        lcd.setCursor(0, 0); 
+
+        if (scan_mode) { // Reverse
+            rotation_complete = 1;
+            translation_complete = 0;
+            float angle = fmod(state[2] - PI, 2*PI);
+            reverse_mode = true;
+            target_X = state[0] + BACK_TRANSLATION * cos(angle);
+            target_Y = state[1] + BACK_TRANSLATION * sin(angle);
+        } else {
+            float dir = (distance_left < DISTANCE_THRESHOLD) ? 1.0 : -1.0;
+            rotation_complete = 0;
+            translation_complete = 0;
+            target_angle = fmod(state[2] - (dir * PI/2), 2*PI);
+            reverse_mode = false;
+            target_X = state[0] + TRANSLATION * cos(target_angle);
+            target_Y = state[1] + TRANSLATION * sin(target_angle);
+        }
     }
 
     if (rotation_complete == 0) {
@@ -737,8 +720,13 @@ void translation(float current_x, float current_y, float target_x, float target_
     wheelSpeedRight = 140;
     
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
-    
+    Serial.print("dist: ");
+    Serial.println(distFromTarget);
+    Serial.print("prev dist: ");
+    Serial.println(prevDistFromTarget);
     if (distFromTarget <= prevDistFromTarget) {
+       Serial.println("regular translation: ");
+       Serial.println(reverse_mode);
        // Approaching target, continue
        prevDistFromTarget = distFromTarget;
        if (getDistance(current_x, current_y, target_x, target_y) > 0.03) {
@@ -751,12 +739,13 @@ void translation(float current_x, float current_y, float target_x, float target_
             }
         }
         else { // Target reached, stop
+            reverse_mode = false;
             setMotor(STOP, 0, enA, IN1, IN2);
             setMotor(STOP, 0, enB, IN3, IN4);
             Serial.println("translation reached");
             translation_complete = 1;
         }
-    } else {
+    } else if (reverse_mode == false) {
       // Target missed, stop
         setMotor(STOP, 0, enA, IN1, IN2);
         setMotor(STOP, 0, enB, IN3, IN4);
@@ -766,6 +755,14 @@ void translation(float current_x, float current_y, float target_x, float target_
         prevDistFromTarget = 100;
         rotation_complete = 0; // Reset the turn - rotate and translate again to meet the target
         target_angle = getTheta(current_x, current_y, target_X, target_Y);
+    }
+    else {
+        // no hard stopping in reverse mode
+        Serial.println("reverse mode with hard stop");
+        translation_complete = 1;
+        rotation_complete = 0;
+        reverse_mode = false;
+        prevDistFromTarget = 100;
     }
 }    
 
@@ -991,10 +988,11 @@ void loop() {
                 target_angle = fmod(state[2] + ((-90) * PI / 180.0), 2*PI);
                 rotation_complete = 0;
                 translation_complete = 1;
+                lcd.clear();
             }
 
             lcd.setCursor(0, 0); 
-            lcd.print("ALCOHOL SCAN: ");
+            lcd.print("SCANNING: ");
             lcd.print(curr_scan);
             strip.setPixelColor(curr_scan*2, strip.Color(255, 128, 0));
             strip.setPixelColor((curr_scan*2) + 1, strip.Color(255, 128, 0));
@@ -1017,21 +1015,33 @@ void loop() {
             // Find direction of highest ethanol concentration
             int max_i = 0;
             float max_val = 0.0;
-            float val = 0.0;
+            float val_eth = 0.0;
+            float prev_eth = 0.0;
+            float val_tvoc = 0.0;
+            float prev_tvoc = 0.0;
+            float slope_eth = 0.0;
+            float slope_tvoc = 0.0;
+                
             int low_detection_count = 0;
             for (int i = 0; i < NUM_SCANS; i++) {
-                float slope;
-                val = scan_readings[i].gm_eth_v;
-                float prev_val = scan_readings[i - 1].gm_eth_v;
+                val_eth = scan_readings[i].gm_eth_v;
+                val_tvoc = scan_readings[i].ens_TVOC;
+                prev_eth = scan_readings[i - 1].gm_eth_v;
+                prev_tvoc = scan_readings[i - 1].ens_TVOC;
                 if (i > 0) {
-                    slope = (val - prev_val) / (SCAN_TIME);
-                    if (slope <= 0.0) {
+                    slope_eth = (val_eth - prev_eth) / (SCAN_TIME);
+                    slope_tvoc = (val_tvoc - prev_tvoc) / (SCAN_TIME);
+                    Serial.println("slopes");
+                    Serial.println(slope_eth);
+                    Serial.println(slope_tvoc);
+                    if ((slope_eth <= 0.0 && slope_tvoc <= 5.0)) {
+                        // TODO: test and tune slope_tvoc threshold for exit 
                         low_detection_count++;
                     }
                 }
-                if (val > max_val) {
+                if (val_eth > max_val) {
                     max_i = i;
-                    max_val = val;
+                    max_val = val_eth;
                 }
             }
             
