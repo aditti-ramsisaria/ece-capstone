@@ -173,7 +173,7 @@ const float SLOPE_THRESHOLD_ETH = 0.02;
 const float SLOPE_THRESHOLD_TVOC = 20.0;
 
 const float TRANSLATION = 0.15; // Translation (m)
-const float BACK_TRANSLATION = 0.1; // (m)
+const float BACK_TRANSLATION = 0.08; // (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
 const int SCAN_TIME = 3; // Time stopped to sample (s)
@@ -506,9 +506,12 @@ void readSensors() {
                 
                 lcd.clear();
                 lcd.setCursor(0, 1); 
-                lcd.print(pred);
+                if(pred == "paint thinner") { 
+                  lcd.print(" PAINT THINNER");
+                } else if(pred == "alcohol") {
+                  lcd.print("    ALCOHOL");
+                }
                 confirmedScent(pred);
-
             } 
 
             else {
@@ -520,7 +523,7 @@ void readSensors() {
                 Serial.println(slope_ens_tvoc);
                 if ((scent_detected == false) && 
                     (((slope_grove_eth > SLOPE_THRESHOLD_ETH) || 
-                    (slope_ens_tvoc > SLOPE_THRESHOLD_TVOC)))) {
+                    ((slope_grove_eth > 0.005) && (slope_ens_tvoc > SLOPE_THRESHOLD_TVOC))))) {
                     scent_detected = true;
                     strip.fill(strip.Color(0,0,0), 0, 12);
                     translation_complete = 1;
@@ -562,7 +565,7 @@ void motorSetup() {
     Serial.println("Starting in 5s");
     //delay(5000);
     readySetGo();
-    randomSeed(analogRead(0));
+    randomSeed(0);
 }
 
 // compute random x, y, orientation
@@ -896,6 +899,7 @@ void wallDetected() {
     strip.setPixelColor(i, strip.Color(255, 0, 0));
     strip.show();
   }
+  strip.fill(strip.Color(0,0,0), 0, 12);
 }
 
 void confirmedScent(char* label) {
@@ -939,7 +943,7 @@ void setup() {
     lcd.backlight(); //To Power ON the back light
     strip.begin();
     strip.show();
-    strip.setBrightness(30);
+    strip.setBrightness(20);
     reset();
     Serial.begin(115200);
     sensorSetup();
@@ -994,8 +998,10 @@ void loop() {
             lcd.setCursor(0, 0); 
             lcd.print("SCANNING: ");
             lcd.print(curr_scan);
-            strip.setPixelColor(curr_scan*2, strip.Color(255, 128, 0));
-            strip.setPixelColor((curr_scan*2) + 1, strip.Color(255, 128, 0));
+            //CHANGED CODE TO MAKE ALL YELLOW BEFORE CURRENT SCAN
+            for(int i = 0; i <= (curr_scan*2)+1; i++) {
+              strip.setPixelColor(i, strip.Color(255, 128, 0));
+            }
             strip.show();
 
             if (num_samples == SCAN_TIME * SAMPLING_FREQ_HZ) {
