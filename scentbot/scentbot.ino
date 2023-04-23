@@ -161,6 +161,7 @@ float target_angle = 0.0;
 int rotation_complete = 1;
 int translation_complete = 1;
 bool reverse_mode = false;
+bool finished_reverse = true;
 
 // right - M2 - B
 // left - M1 - A
@@ -170,13 +171,13 @@ bool reverse_mode = false;
 const float CONFIRMATION_THRESHOLD_TVOC = 600.0;
 const float CONFIRMATION_THRESHOLD_GROVE_ETH = 2.0;
 const float SLOPE_THRESHOLD_ETH = 0.02;
-const float SLOPE_THRESHOLD_TVOC = 20.0;
+const float SLOPE_THRESHOLD_TVOC = 30.0;
 
 const float TRANSLATION = 0.15; // Translation (m)
 const float BACK_TRANSLATION = 0.08; // (m)
 
 const int NUM_SCANS = 6; // Number of scans per rotation
-const int SCAN_TIME = 3; // Time stopped to sample (s)
+const int SCAN_TIME = 5; // Time stopped to sample (s)
 int scan_angle = 180 / NUM_SCANS; // Angle between samples (deg)
 const SensorReading EMPTY_SCAN_READINGS[NUM_SCANS];
 
@@ -565,14 +566,20 @@ void motorSetup() {
     Serial.println("Starting in 5s");
     //delay(5000);
     readySetGo();
-    randomSeed(0);
+    randomSeed(2);
 }
 
 // compute random x, y, orientation
 void computeRandomConfig(float current_theta, float current_x, float current_y) {
     // compute a new orientation to turn to in random exploration within 180 deg of current
     // computes target cooridnates using new theta
-    target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
+    if (finished_reverse == false) {
+        target_angle = random(current_theta + PI / 2.0, current_theta + 3 * PI / 2.0);
+        finished_reverse = true;
+    }
+    else {
+        target_angle = random(current_theta - PI / 2.0, current_theta + PI / 2.0);
+    }
     float new_distance = random(15.0, 40.0) / 100.0;
     float new_x = current_x + new_distance * cos(target_angle);
     float new_y = current_y + new_distance * sin(target_angle);
@@ -666,6 +673,7 @@ void checkEncoders() {
         target_X = state[0] + BACK_TRANSLATION * cos(target_angle);
         target_Y = state[1] + BACK_TRANSLATION * sin(target_angle);
         reverse_mode = true;
+        finished_reverse = false;
     } else if (((distance_left < DISTANCE_THRESHOLD) || (distance_right < DISTANCE_THRESHOLD))) {
         // If in scan_mode and rotating
         lcd.clear();
@@ -685,6 +693,7 @@ void checkEncoders() {
             translation_complete = 0;
             float angle = fmod(state[2] - PI, 2*PI);
             reverse_mode = true;
+            finished_reverse = false;
             target_X = state[0] + BACK_TRANSLATION * cos(angle);
             target_Y = state[1] + BACK_TRANSLATION * sin(angle);
         } else {
@@ -723,13 +732,7 @@ void translation(float current_x, float current_y, float target_x, float target_
     wheelSpeedRight = 140;
     
     distFromTarget = getDistance(current_x, current_y, target_x, target_y);
-    Serial.print("dist: ");
-    Serial.println(distFromTarget);
-    Serial.print("prev dist: ");
-    Serial.println(prevDistFromTarget);
     if (distFromTarget <= prevDistFromTarget) {
-       Serial.println("regular translation: ");
-       Serial.println(reverse_mode);
        // Approaching target, continue
        prevDistFromTarget = distFromTarget;
        if (getDistance(current_x, current_y, target_x, target_y) > 0.03) {
@@ -1040,7 +1043,8 @@ void loop() {
                     Serial.println("slopes");
                     Serial.println(slope_eth);
                     Serial.println(slope_tvoc);
-                    if ((slope_eth <= 0.0 && slope_tvoc <= 5.0)) {
+                    if (((slope_eth <= 0.005 && slope_tvoc <= 10.0)) ||
+                          (val_eth < 1.1)) {
                         // TODO: test and tune slope_tvoc threshold for exit 
                         low_detection_count++;
                     }
